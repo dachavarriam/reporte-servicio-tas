@@ -41,6 +41,14 @@ export function UsersPage() {
     notify(user.activo ? 'Usuario desactivado' : 'Usuario activado'); await load();
   }
 
+  async function deleteUser(user: Usuario) {
+    if (user.id === current?.id) { notify('No puedes eliminar tu propio usuario'); return; }
+    if (!window.confirm(`Eliminar usuario ${user.nombre}? Esta acción no se puede deshacer.`)) return;
+    const res = await fetch(`/api/usuarios/${user.id}`, { method: 'DELETE', headers: authHeaders() });
+    if (!res.ok) { notify('No se pudo eliminar el usuario'); return; }
+    notify('Usuario eliminado'); await load();
+  }
+
   if (current?.rol !== 'admin') return <div className="page"><div className="alert warning"><ShieldCheck /> Solo un administrador puede gestionar usuarios.</div></div>;
 
   return <div className="page">
@@ -63,7 +71,10 @@ export function UsersPage() {
       {loading ? <div className="loading">Cargando usuarios...</div> : items.map(user => <div className="line-item" key={user.id}>
         <strong>{user.nombre}</strong>
         <span>{user.usuario} · {user.correo} · {user.rol} · {user.activo ? 'Activo' : 'Inactivo'}</span>
-        <Button type="button" variant="outline" onClick={() => void toggleUser(user)}>{user.activo ? 'Desactivar' : 'Activar'}</Button>
+        <div className="modal-actions">
+          <Button type="button" variant="outline" onClick={() => void toggleUser(user)}>{user.activo ? 'Desactivar' : 'Activar'}</Button>
+          <Button type="button" variant="danger" disabled={user.id === current?.id} onClick={() => void deleteUser(user)}>Eliminar</Button>
+        </div>
       </div>)}
     </section>
   </div>;

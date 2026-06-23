@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import type { RolUsuario } from '../src/domain/types';
 
-type Env = { DB: D1Database; FILES: R2Bucket; BROWSER: Fetcher; APP_ORIGIN: string; N8N_WEBHOOK_URL: string; R2_PREFIX: string; ASSETS: Fetcher };
+type Env = { DB: D1Database; FILES: R2Bucket; BROWSER: BrowserRun; APP_ORIGIN: string; N8N_WEBHOOK_URL: string; R2_PREFIX: string; ASSETS: Fetcher };
 const app = new Hono<{ Bindings: Env }>();
 app.use('/api/*', async (c, next) => cors({ origin: c.env.APP_ORIGIN, credentials: true })(c, next));
 
@@ -46,6 +46,15 @@ app.put('/api/usuarios/:id', async c => {
     await c.env.DB.prepare('update usuarios set nombre = ?, correo = ?, telefono = ?, rol = ?, activo = ? where id = ?')
       .bind(body.nombre, body.correo, body.telefono ?? '', body.rol, body.activo ? 1 : 0, c.req.param('id')).run();
   }
+  return c.json({ ok: true });
+});
+
+app.delete('/api/usuarios/:id', async c => {
+  const user = await requireUser(c, 'admin'); if (!user) return c.json({ error: 'unauthorized' }, 401);
+  const id = c.req.param('id');
+  if (id === user.id) return c.json({ error: 'cannot_delete_self' }, 400);
+  await c.env.DB.prepare('delete from sesiones where usuario_id = ?').bind(id).run();
+  await c.env.DB.prepare('delete from usuarios where id = ?').bind(id).run();
   return c.json({ ok: true });
 });
 
@@ -127,8 +136,8 @@ app.post('/api/reportes/:id/pdf', async c => {
   const row = await c.env.DB.prepare('select * from reportes where id = ?').bind(c.req.param('id')).first();
   if (!row) return c.json({ error: 'not_found' }, 404);
   const rs = rowToReport(row); const html = renderPdfHtml(rs);
-  const pdf = await c.env.BROWSER.fetch('https://api.cloudflare.com/client/v4/browser-rendering/pdf', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ html }) });
-  if (!pdf.ok) return c.json({ error: 'pdf_failed' }, 502);
+  const pdf = await c.env.BROWSER.quickAction('pdf', { html, cacheTTL: 0, pdfOptions: { format: 'letter', printBackground: true, margin: { top: '0.5in', right: '0.5in', bottom: '0.5in', left: '0.5in' } } });
+  if (!pdf.ok) return c.json({ error: 'pdf_failed', detail: await pdf.text() }, 502);
   const prefix = c.env.R2_PREFIX || 'reportes';
   const key = `${prefix}/${rs.id}/pdf/${Date.now()}.pdf`; await c.env.FILES.put(key, await pdf.arrayBuffer(), { httpMetadata: { contentType: 'application/pdf' } });
   await c.env.DB.prepare('insert into archivos (id, reporte_id, tipo, r2_key, creado_en) values (?, ?, ?, ?, ?)').bind(crypto.randomUUID(), rs.id, 'pdf', key, new Date().toISOString()).run();
