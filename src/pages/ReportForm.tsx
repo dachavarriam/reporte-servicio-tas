@@ -1,6 +1,6 @@
 import { Camera, Check, ChevronLeft, ChevronRight, Plus, Save, Trash2, Upload } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { Button, Field, Input, Select, Textarea } from '../components/ui';
 import { SignaturePad } from '../components/SignaturePad';
 import { reports } from '../data/repository';
@@ -10,10 +10,10 @@ import { useApp } from '../store/app';
 
 const titles = ['Cliente y visita', 'Trabajo realizado', 'Equipos intervenidos', 'Materiales y repuestos', 'Personal participante', 'Evidencias', 'Revisión y firma'];
 export function ReportForm() {
-  const { id } = useParams(); const nav = useNavigate(); const notify = useApp(s => s.notify); const reload = useApp(s => s.load); const user = useApp(s => s.user); const [step, setStep] = useState(Number(localStorage.getItem('rs-draft-step') ?? 1)); const [rs, setRs] = useState<ReporteServicio | null>(null); const [saving, setSaving] = useState(false); const [sign, setSign] = useState(false); const timer = useRef<number>(0);
-  useEffect(() => { void (async () => setRs(id ? await reports.get(id) : await reports.createDraft({ supervisor: user?.nombre, creadoPor: user?.nombre })))(); }, [id, user?.nombre]);
+  const { id } = useParams(); const nav = useNavigate(); const location = useLocation(); const notify = useApp(s => s.notify); const reload = useApp(s => s.load); const user = useApp(s => s.user); const draftKey = id ?? new URLSearchParams(location.search).get('draft') ?? 'new'; const stepKey = `rs-draft-step-${draftKey}`; const [step, setStep] = useState(1); const [rs, setRs] = useState<ReporteServicio | null>(null); const [saving, setSaving] = useState(false); const [sign, setSign] = useState(false); const timer = useRef<number>(0);
+  useEffect(() => { setRs(null); setStep(id ? Number(localStorage.getItem(stepKey) ?? 1) : 1); void (async () => setRs(id ? await reports.get(id) : await reports.createDraft({ supervisor: user?.nombre, creadoPor: user?.nombre })))(); }, [id, stepKey, user?.nombre]);
   useEffect(() => { if (!rs) return; window.clearTimeout(timer.current); setSaving(true); timer.current = window.setTimeout(() => { void reports.saveDraft(rs).then(() => setSaving(false)); }, 800); return () => window.clearTimeout(timer.current); }, [rs]);
-  useEffect(() => { localStorage.setItem('rs-draft-step', String(step)); window.scrollTo({ top: 0, behavior: 'smooth' }); }, [step]);
+  useEffect(() => { localStorage.setItem(stepKey, String(step)); window.scrollTo({ top: 0, behavior: 'smooth' }); }, [step, stepKey]);
   const patch = useCallback((p: Partial<ReporteServicio>) => setRs(x => x ? { ...x, ...p } : x), []);
   const field = (key: keyof ReporteServicio) => ({ value: String(rs?.[key] ?? ''), onChange: (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => patch({ [key]: e.target.value }) });
   const addEquipo = () => patch({ equipos: [...rs!.equipos, { id: uid(), nombre: '', marca: '', modelo: '', serie: '', ubicacion: '', estadoInicial: '', estadoFinal: '', trabajoRealizado: '', recomendacion: '' }] });
