@@ -1,0 +1,955 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased;background:#EBECEF}
+  textarea,input,select,button{font-family:inherit}
+  [data-scroll]{scrollbar-width:thin;scrollbar-color:#CBCED3 transparent}
+  [data-scroll]::-webkit-scrollbar{width:6px;height:6px}
+  [data-scroll]::-webkit-scrollbar-thumb{background:#CBCED3;border-radius:3px}
+  @keyframes tasPulse{0%{box-shadow:0 0 0 0 rgba(194,14,26,.45)}70%{box-shadow:0 0 0 12px rgba(194,14,26,0)}100%{box-shadow:0 0 0 0 rgba(194,14,26,0)}}
+  @keyframes tasEq{0%,100%{height:6px}50%{height:22px}}
+  @keyframes tasFade{from{opacity:.4}to{opacity:1}}
+  @keyframes tasToast{from{opacity:0}to{opacity:1}}
+</style>
+</helmet>
+
+<div style="min-height:100vh;background:#EBECEF;display:flex;flex-direction:column;align-items:center;padding:22px 16px 40px;color:#16181C">
+
+  <div style="display:flex;align-items:center;gap:14px;margin-bottom:20px">
+    <img src="assets/tas-mark.png" alt="TAS" style="height:30px;width:auto"/>
+    <div style="width:1px;height:24px;background:#D4D6DA"></div>
+    <div style="display:flex;align-items:center;gap:4px;background:#DEE0E4;padding:4px;border-radius:11px">
+      <button onClick="{{ onMobile }}" style="{{ devMobileStyle }}">Móvil</button>
+      <button onClick="{{ onDesktop }}" style="{{ devDeskStyle }}">Escritorio</button>
+    </div>
+  </div>
+
+  <!-- ===================== MÓVIL ===================== -->
+  <sc-if value="{{ isMobile }}" hint-placeholder-val="{{ true }}">
+  <div style="width:402px;height:858px;background:#F4F5F7;border-radius:42px;border:1px solid #D7D9DD;box-shadow:0 24px 60px -18px rgba(20,22,28,.4),0 0 0 11px #15171B;overflow:hidden;position:relative;display:flex;flex-direction:column">
+
+    <!-- status bar -->
+    <div style="flex:none;height:44px;display:flex;align-items:center;justify-content:space-between;padding:0 26px;background:#fff;font-size:14px;font-weight:600;color:#16181C">
+      <span>9:41</span>
+      <div style="display:flex;align-items:center;gap:6px;font-size:12px">
+        <span>●●●</span><span>5G</span>
+        <div style="width:24px;height:12px;border:1.5px solid #16181C;border-radius:3px;position:relative"><div style="position:absolute;inset:1.5px;width:70%;background:#16181C;border-radius:1px"></div></div>
+      </div>
+    </div>
+
+    <!-- HOME -->
+    <sc-if value="{{ isHome }}" hint-placeholder-val="{{ true }}">
+    <div data-scroll data-screen-label="Inicio" style="flex:1;overflow-y:auto;background:#F4F5F7">
+      <div style="background:#fff;padding:18px 20px 20px;border-bottom:1px solid #ECEDEF">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px">
+          <img src="assets/tas-mark.png" alt="TAS" style="height:26px;width:auto"/>
+          <div style="display:flex;align-items:center;gap:14px;color:#5B6470">
+            <div style="position:relative">{{ ic.bell }}<span style="position:absolute;top:-2px;right:-2px;width:8px;height:8px;background:#C20E1A;border-radius:50%;border:1.5px solid #fff"></span></div>
+            <div style="width:34px;height:34px;border-radius:50%;background:#C20E1A;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px">CH</div>
+          </div>
+        </div>
+        <div style="font-size:14px;color:#8A929C;font-weight:500">Buenos días,</div>
+        <div style="font-size:26px;font-weight:700;letter-spacing:-.02em;margin-top:2px">Carlos Hernández</div>
+      </div>
+
+      <div style="padding:18px 20px">
+        <button onClick="{{ goForm }}" style="width:100%;background:#C20E1A;color:#fff;border:none;border-radius:16px;padding:18px;font-size:17px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;box-shadow:0 10px 22px -8px rgba(194,14,26,.6)" style-active="background:#A40A14">
+          {{ ic.plus }} Crear nuevo reporte
+        </button>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:11px;margin-top:18px">
+          <sc-for list="{{ summary }}" as="c" hint-placeholder-count="4">
+            <button onClick="{{ c.onClick }}" style="text-align:left;background:#fff;border:1px solid #ECEDEF;border-radius:14px;padding:14px;cursor:pointer" style-active="border-color:#D7D9DD">
+              <div style="font-size:30px;font-weight:700;letter-spacing:-.03em;color:{{ c.color }};line-height:1">{{ c.n }}</div>
+              <div style="font-size:12.5px;color:#5B6470;font-weight:600;margin-top:7px;line-height:1.25">{{ c.label }}</div>
+            </button>
+          </sc-for>
+        </div>
+
+        <!-- search -->
+        <div style="display:flex;align-items:center;gap:9px;background:#fff;border:1px solid #ECEDEF;border-radius:12px;padding:11px 13px;margin-top:18px;color:#9AA2AD" style-focus-within="border-color:#C20E1A">
+          {{ ic.search }}
+          <input value="{{ search }}" onChange="{{ onSearch }}" placeholder="Buscar por RS, cliente o ubicación" style="border:none;outline:none;flex:1;font-size:14.5px;color:#16181C;background:transparent"/>
+        </div>
+
+        <!-- filter chips -->
+        <div data-scroll style="display:flex;gap:8px;overflow-x:auto;margin:14px -20px 0;padding:0 20px 4px">
+          <sc-for list="{{ chips }}" as="ch" hint-placeholder-count="5">
+            <button onClick="{{ ch.onClick }}" style="{{ ch.style }}">{{ ch.label }}</button>
+          </sc-for>
+        </div>
+
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-top:22px;margin-bottom:11px">
+          <div style="font-size:16px;font-weight:700">Reportes recientes</div>
+          <div style="font-size:13px;color:#8A929C;font-weight:600">{{ resultCount }} resultados</div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <sc-for list="{{ reportsList }}" as="r" hint-placeholder-count="5">
+            <button onClick="{{ r.onOpen }}" style="text-align:left;background:#fff;border:1px solid #ECEDEF;border-radius:14px;padding:14px;cursor:pointer;display:block" style-active="border-color:#D7D9DD">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+                <span style="font-size:13px;font-weight:700;color:#C20E1A;font-feature-settings:'tnum'">{{ r.id }}</span>
+                <span style="display:inline-flex;align-items:center;gap:6px;background:{{ r.sBg }};color:{{ r.sFg }};font-size:11.5px;font-weight:700;padding:4px 9px;border-radius:999px">
+                  <span style="width:6px;height:6px;border-radius:50%;background:{{ r.sDot }}"></span>{{ r.status }}
+                </span>
+              </div>
+              <div style="font-size:15.5px;font-weight:700;margin-top:9px;letter-spacing:-.01em">{{ r.cliente }}</div>
+              <div style="display:flex;align-items:center;gap:13px;margin-top:7px;color:#8A929C;font-size:12.5px;font-weight:500">
+                <span style="display:inline-flex;align-items:center;gap:4px">{{ ic.mapPin }}{{ r.ubic }}</span>
+                <span style="display:inline-flex;align-items:center;gap:4px">{{ ic.cal }}{{ r.fecha }}</span>
+              </div>
+              <div style="margin-top:9px;font-size:12.5px;color:#5B6470;font-weight:600">{{ r.tipo }}</div>
+            </button>
+          </sc-for>
+        </div>
+        <div style="height:14px"></div>
+      </div>
+    </div>
+    </sc-if>
+
+    <!-- FORM -->
+    <sc-if value="{{ isForm }}" hint-placeholder-val="{{ false }}">
+    <div data-scroll data-screen-label="Nuevo RS" style="flex:1;overflow-y:auto;background:#F4F5F7">
+      <div style="position:sticky;top:0;z-index:5;background:#fff;border-bottom:1px solid #ECEDEF;padding:16px 20px 14px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:13px">
+          <button onClick="{{ goHome }}" style="background:transparent;border:none;cursor:pointer;color:#5B6470;display:flex;align-items:center;gap:5px;font-size:14px;font-weight:600;padding:0">{{ ic.chevL }} Salir</button>
+          <span style="display:inline-flex;align-items:center;gap:6px;background:#E7F6EC;color:#117A3B;font-size:12px;font-weight:700;padding:5px 10px;border-radius:999px">{{ ic.check }} Guardado automático</span>
+        </div>
+        <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px">
+          <div style="font-size:18px;font-weight:700;letter-spacing:-.01em">{{ stepTitle }}</div>
+          <div style="font-size:13px;color:#8A929C;font-weight:600">Paso {{ step }} de 7</div>
+        </div>
+        <div style="display:flex;gap:5px">
+          <sc-for list="{{ segs }}" as="g" hint-placeholder-count="7">
+            <div style="flex:1;height:5px;border-radius:3px;background:{{ g.bg }}"></div>
+          </sc-for>
+        </div>
+      </div>
+
+      <div style="padding:18px 20px 26px">
+
+        <!-- STEP 1 -->
+        <sc-if value="{{ step1 }}" hint-placeholder-val="{{ true }}">
+        <div style="animation:tasFade .2s both">
+          <div style="margin-bottom:15px"><label style="display:block;font-size:12.5px;font-weight:700;color:#5B6470;margin-bottom:6px">Fecha de la visita</label><input type="date" value="2026-06-22" style="width:100%;padding:13px;border:1px solid #E1E3E7;border-radius:11px;font-size:15px;color:#16181C;background:#fff;outline:none" style-focus="border-color:#C20E1A"/></div>
+          <div style="margin-bottom:15px"><label style="display:block;font-size:12.5px;font-weight:700;color:#5B6470;margin-bottom:6px">Cliente</label>
+            <div style="position:relative"><input value="Empresa ABC Honduras" style="width:100%;padding:13px 38px 13px 13px;border:1px solid #E1E3E7;border-radius:11px;font-size:15px;color:#16181C;background:#fff;outline:none" style-focus="border-color:#C20E1A"/><div style="position:absolute;right:12px;top:50%;transform:translateY(-50%);color:#9AA2AD">{{ ic.search }}</div></div>
+            <div style="font-size:12px;color:#8A929C;margin-top:6px">Autocompletado · 3 coincidencias</div>
+          </div>
+          <div style="margin-bottom:15px"><label style="display:block;font-size:12.5px;font-weight:700;color:#5B6470;margin-bottom:6px">Contacto del cliente</label><input value="María López" style="width:100%;padding:13px;border:1px solid #E1E3E7;border-radius:11px;font-size:15px;color:#16181C;background:#fff;outline:none" style-focus="border-color:#C20E1A"/></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:11px;margin-bottom:15px">
+            <div><label style="display:block;font-size:12.5px;font-weight:700;color:#5B6470;margin-bottom:6px">Correo</label><input value="mlopez@empresaabc.hn" style="width:100%;padding:13px;border:1px solid #E1E3E7;border-radius:11px;font-size:14px;color:#16181C;background:#fff;outline:none" style-focus="border-color:#C20E1A"/></div>
+            <div><label style="display:block;font-size:12.5px;font-weight:700;color:#5B6470;margin-bottom:6px">Teléfono</label><input value="+504 9988-7766" style="width:100%;padding:13px;border:1px solid #E1E3E7;border-radius:11px;font-size:14px;color:#16181C;background:#fff;outline:none" style-focus="border-color:#C20E1A"/></div>
+          </div>
+          <div style="margin-bottom:15px"><label style="display:block;font-size:12.5px;font-weight:700;color:#5B6470;margin-bottom:6px">Ubicación de la visita</label><input value="Tegucigalpa, Col. Palmira" style="width:100%;padding:13px;border:1px solid #E1E3E7;border-radius:11px;font-size:15px;color:#16181C;background:#fff;outline:none" style-focus="border-color:#C20E1A"/></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:11px;margin-bottom:15px">
+            <div><label style="display:block;font-size:12.5px;font-weight:700;color:#5B6470;margin-bottom:6px">Orden de trabajo <span style="color:#9AA2AD;font-weight:500">(opcional)</span></label><input value="OT-4587" style="width:100%;padding:13px;border:1px solid #E1E3E7;border-radius:11px;font-size:14px;color:#16181C;background:#fff;outline:none" style-focus="border-color:#C20E1A"/></div>
+            <div><label style="display:block;font-size:12.5px;font-weight:700;color:#5B6470;margin-bottom:6px">Solicitado por</label><input value="María López" style="width:100%;padding:13px;border:1px solid #E1E3E7;border-radius:11px;font-size:14px;color:#16181C;background:#fff;outline:none" style-focus="border-color:#C20E1A"/></div>
+          </div>
+          <div style="margin-bottom:15px"><label style="display:block;font-size:12.5px;font-weight:700;color:#5B6470;margin-bottom:8px">Tipo de visita</label>
+            <div style="display:flex;flex-wrap:wrap;gap:8px">
+              <sc-for list="{{ tipoChips }}" as="t" hint-placeholder-count="8"><div style="{{ t.style }}">{{ t.label }}</div></sc-for>
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:11px">
+            <div><label style="display:block;font-size:12.5px;font-weight:700;color:#5B6470;margin-bottom:6px">Hora de llegada</label><input type="time" value="09:00" style="width:100%;padding:13px;border:1px solid #E1E3E7;border-radius:11px;font-size:14px;color:#16181C;background:#fff;outline:none" style-focus="border-color:#C20E1A"/></div>
+            <div><label style="display:block;font-size:12.5px;font-weight:700;color:#5B6470;margin-bottom:6px">Hora de salida</label><input type="time" value="12:30" style="width:100%;padding:13px;border:1px solid #E1E3E7;border-radius:11px;font-size:14px;color:#16181C;background:#fff;outline:none" style-focus="border-color:#C20E1A"/></div>
+          </div>
+        </div>
+        </sc-if>
+
+        <!-- STEP 2 -->
+        <sc-if value="{{ step2 }}" hint-placeholder-val="{{ false }}">
+        <div style="animation:tasFade .2s both">
+          <label style="display:block;font-size:12.5px;font-weight:700;color:#5B6470;margin-bottom:6px">Descripción del trabajo realizado</label>
+          <div style="position:relative;margin-bottom:8px">
+            <textarea rows="5" style="width:100%;padding:13px;border:1px solid #E1E3E7;border-radius:11px;font-size:15px;color:#16181C;background:#fff;outline:none;resize:none;line-height:1.5" style-focus="border-color:#C20E1A">Se realizó mantenimiento preventivo a la impresora Zebra ZT411. Limpieza de cabezal de impresión, recalibración de sensores de medios y prueba de calidad de impresión de etiquetas.</textarea>
+          </div>
+          <div style="display:flex;align-items:center;gap:11px;margin-bottom:18px;background:#fff;border:1px solid #E1E3E7;border-radius:12px;padding:10px 12px">
+            <button onClick="{{ toggleRec }}" style="{{ recBtnStyle }}">{{ ic.mic }}</button>
+            <sc-if value="{{ recording }}" hint-placeholder-val="{{ false }}">
+              <div style="display:flex;align-items:flex-end;gap:3px;height:24px;flex:1">
+                <div style="width:3px;background:#C20E1A;border-radius:2px;animation:tasEq .9s infinite;animation-delay:0s"></div>
+                <div style="width:3px;background:#C20E1A;border-radius:2px;animation:tasEq .9s infinite;animation-delay:.15s"></div>
+                <div style="width:3px;background:#C20E1A;border-radius:2px;animation:tasEq .9s infinite;animation-delay:.3s"></div>
+                <div style="width:3px;background:#C20E1A;border-radius:2px;animation:tasEq .9s infinite;animation-delay:.45s"></div>
+                <div style="width:3px;background:#C20E1A;border-radius:2px;animation:tasEq .9s infinite;animation-delay:.6s"></div>
+                <span style="margin-left:8px;font-size:13px;font-weight:700;color:#C20E1A">Grabando… toca para detener</span>
+              </div>
+            </sc-if>
+            <sc-if value="{{ recording }}" hint-placeholder-val="{{ true }}"></sc-if>
+            <span style="font-size:13.5px;color:#8A929C;font-weight:600">Dictar por voz</span>
+          </div>
+          <div style="margin-bottom:15px"><label style="display:block;font-size:12.5px;font-weight:700;color:#5B6470;margin-bottom:6px">Observaciones y hallazgos</label><textarea rows="2" style="width:100%;padding:13px;border:1px solid #E1E3E7;border-radius:11px;font-size:14.5px;color:#16181C;background:#fff;outline:none;resize:none;line-height:1.5" style-focus="border-color:#C20E1A">Rodillo de impresión con desgaste visible. Se recomienda reemplazo.</textarea></div>
+          <div style="margin-bottom:15px"><label style="display:block;font-size:12.5px;font-weight:700;color:#5B6470;margin-bottom:6px">Estado actual del equipo</label>
+            <select style="width:100%;padding:13px;border:1px solid #E1E3E7;border-radius:11px;font-size:15px;color:#16181C;background:#fff;outline:none" style-focus="border-color:#C20E1A"><option>Operativo</option><option>Operativo con observaciones</option><option>Fuera de servicio</option></select>
+          </div>
+          <div style="margin-bottom:15px"><label style="display:block;font-size:12.5px;font-weight:700;color:#5B6470;margin-bottom:6px">Recomendaciones</label><textarea rows="2" style="width:100%;padding:13px;border:1px solid #E1E3E7;border-radius:11px;font-size:14.5px;color:#16181C;background:#fff;outline:none;resize:none;line-height:1.5" style-focus="border-color:#C20E1A">Programar reemplazo de rodillo y limpieza trimestral.</textarea></div>
+          <div style="margin-bottom:18px"><label style="display:block;font-size:12.5px;font-weight:700;color:#5B6470;margin-bottom:6px">Acciones pendientes</label><textarea rows="2" style="width:100%;padding:13px;border:1px solid #E1E3E7;border-radius:11px;font-size:14.5px;color:#16181C;background:#fff;outline:none;resize:none;line-height:1.5" style-focus="border-color:#C20E1A">Cotizar y entregar rodillo de repuesto.</textarea></div>
+          <div style="margin-bottom:15px"><label style="display:block;font-size:12.5px;font-weight:700;color:#5B6470;margin-bottom:8px">¿Próxima visita requerida?</label>
+            <div style="display:flex;gap:10px"><button onClick="{{ onYes }}" style="{{ yesStyle }}">Sí</button><button onClick="{{ onNo }}" style="{{ noStyle }}">No</button></div>
+          </div>
+          <sc-if value="{{ nextVisit }}" hint-placeholder-val="{{ true }}">
+            <div><label style="display:block;font-size:12.5px;font-weight:700;color:#5B6470;margin-bottom:6px">Fecha sugerida de seguimiento</label><input type="date" value="2026-09-22" style="width:100%;padding:13px;border:1px solid #E1E3E7;border-radius:11px;font-size:15px;color:#16181C;background:#fff;outline:none" style-focus="border-color:#C20E1A"/></div>
+          </sc-if>
+        </div>
+        </sc-if>
+
+        <!-- STEP 3 -->
+        <sc-if value="{{ step3 }}" hint-placeholder-val="{{ false }}">
+        <div style="animation:tasFade .2s both">
+          <div style="font-size:13px;color:#8A929C;font-weight:600;margin-bottom:13px">{{ ic.alert }} Lista dinámica · agrega los equipos intervenidos</div>
+          <div style="display:flex;flex-direction:column;gap:13px">
+            <sc-for list="{{ equipos }}" as="e" hint-placeholder-count="1">
+              <div style="background:#fff;border:1px solid #ECEDEF;border-radius:14px;padding:15px">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+                  <span style="font-size:13px;font-weight:700;color:#C20E1A">Equipo</span>
+                  <button onClick="{{ e.onRemove }}" style="background:#FCEBEC;border:none;color:#C20E1A;width:32px;height:32px;border-radius:9px;display:flex;align-items:center;justify-content:center;cursor:pointer">{{ ic.trash }}</button>
+                </div>
+                <div style="margin-bottom:11px"><label style="display:block;font-size:12px;font-weight:700;color:#5B6470;margin-bottom:5px">Nombre del equipo</label><input value="{{ e.nombre }}" style="width:100%;padding:11px;border:1px solid #E1E3E7;border-radius:10px;font-size:14px;color:#16181C;background:#fff;outline:none" style-focus="border-color:#C20E1A"/></div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:11px">
+                  <div><label style="display:block;font-size:12px;font-weight:700;color:#5B6470;margin-bottom:5px">Marca</label><input value="{{ e.marca }}" style="width:100%;padding:11px;border:1px solid #E1E3E7;border-radius:10px;font-size:14px;color:#16181C;background:#fff;outline:none" style-focus="border-color:#C20E1A"/></div>
+                  <div><label style="display:block;font-size:12px;font-weight:700;color:#5B6470;margin-bottom:5px">Modelo</label><input value="{{ e.modelo }}" style="width:100%;padding:11px;border:1px solid #E1E3E7;border-radius:10px;font-size:14px;color:#16181C;background:#fff;outline:none" style-focus="border-color:#C20E1A"/></div>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:11px">
+                  <div><label style="display:block;font-size:12px;font-weight:700;color:#5B6470;margin-bottom:5px">N° de serie</label><input value="{{ e.serie }}" style="width:100%;padding:11px;border:1px solid #E1E3E7;border-radius:10px;font-size:14px;color:#16181C;background:#fff;outline:none" style-focus="border-color:#C20E1A"/></div>
+                  <div><label style="display:block;font-size:12px;font-weight:700;color:#5B6470;margin-bottom:5px">Ubicación</label><input value="{{ e.ubic }}" style="width:100%;padding:11px;border:1px solid #E1E3E7;border-radius:10px;font-size:14px;color:#16181C;background:#fff;outline:none" style-focus="border-color:#C20E1A"/></div>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:11px">
+                  <div><label style="display:block;font-size:12px;font-weight:700;color:#5B6470;margin-bottom:5px">Estado inicial</label><input value="{{ e.ei }}" style="width:100%;padding:11px;border:1px solid #E1E3E7;border-radius:10px;font-size:14px;color:#16181C;background:#fff;outline:none" style-focus="border-color:#C20E1A"/></div>
+                  <div><label style="display:block;font-size:12px;font-weight:700;color:#5B6470;margin-bottom:5px">Estado final</label><input value="{{ e.ef }}" style="width:100%;padding:11px;border:1px solid #E1E3E7;border-radius:10px;font-size:14px;color:#16181C;background:#fff;outline:none" style-focus="border-color:#C20E1A"/></div>
+                </div>
+                <div style="margin-bottom:11px"><label style="display:block;font-size:12px;font-weight:700;color:#5B6470;margin-bottom:5px">Trabajo realizado</label><textarea rows="2" style="width:100%;padding:11px;border:1px solid #E1E3E7;border-radius:10px;font-size:14px;color:#16181C;background:#fff;outline:none;resize:none;line-height:1.45" style-focus="border-color:#C20E1A">{{ e.trabajo }}</textarea></div>
+                <div><label style="display:block;font-size:12px;font-weight:700;color:#5B6470;margin-bottom:5px">Recomendación</label><textarea rows="2" style="width:100%;padding:11px;border:1px solid #E1E3E7;border-radius:10px;font-size:14px;color:#16181C;background:#fff;outline:none;resize:none;line-height:1.45" style-focus="border-color:#C20E1A">{{ e.rec }}</textarea></div>
+              </div>
+            </sc-for>
+          </div>
+          <button onClick="{{ addEquipo }}" style="width:100%;margin-top:13px;background:#fff;border:1.5px dashed #C7CBD1;color:#16181C;border-radius:12px;padding:14px;font-size:15px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px" style-active="border-color:#C20E1A;color:#C20E1A">{{ ic.plus }} Agregar equipo</button>
+        </div>
+        </sc-if>
+
+        <!-- STEP 4 -->
+        <sc-if value="{{ step4 }}" hint-placeholder-val="{{ false }}">
+        <div style="animation:tasFade .2s both">
+          <div style="font-size:13px;color:#8A929C;font-weight:600;margin-bottom:13px">Materiales y repuestos utilizados</div>
+          <div style="display:flex;flex-direction:column;gap:11px">
+            <sc-for list="{{ materiales }}" as="m" hint-placeholder-count="2">
+              <div style="background:#fff;border:1px solid #ECEDEF;border-radius:14px;padding:14px">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:11px">
+                  <input value="{{ m.prod }}" placeholder="Producto o descripción" style="flex:1;padding:10px;border:1px solid #E1E3E7;border-radius:10px;font-size:14px;font-weight:600;color:#16181C;background:#fff;outline:none;margin-right:9px" style-focus="border-color:#C20E1A"/>
+                  <button onClick="{{ m.onRemove }}" style="background:#FCEBEC;border:none;color:#C20E1A;width:32px;height:32px;border-radius:9px;display:flex;align-items:center;justify-content:center;cursor:pointer;flex:none">{{ ic.trash }}</button>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-bottom:9px">
+                  <div><label style="display:block;font-size:11.5px;font-weight:700;color:#5B6470;margin-bottom:4px">Cantidad</label><input value="{{ m.cant }}" style="width:100%;padding:10px;border:1px solid #E1E3E7;border-radius:10px;font-size:14px;color:#16181C;background:#fff;outline:none" style-focus="border-color:#C20E1A"/></div>
+                  <div><label style="display:block;font-size:11.5px;font-weight:700;color:#5B6470;margin-bottom:4px">Unidad</label><input value="{{ m.unidad }}" style="width:100%;padding:10px;border:1px solid #E1E3E7;border-radius:10px;font-size:14px;color:#16181C;background:#fff;outline:none" style-focus="border-color:#C20E1A"/></div>
+                </div>
+                <div style="margin-bottom:9px"><label style="display:block;font-size:11.5px;font-weight:700;color:#5B6470;margin-bottom:4px">N° serie / lote <span style="color:#9AA2AD;font-weight:500">(opcional)</span></label><input value="{{ m.serie }}" style="width:100%;padding:10px;border:1px solid #E1E3E7;border-radius:10px;font-size:14px;color:#16181C;background:#fff;outline:none" style-focus="border-color:#C20E1A"/></div>
+                <div style="display:flex;gap:7px">
+                  <div style="flex:1;text-align:center;padding:9px;border-radius:9px;font-size:12.5px;font-weight:700;border:1px solid #E1E3E7;color:#5B6470">Instalado</div>
+                  <div style="flex:1;text-align:center;padding:9px;border-radius:9px;font-size:12.5px;font-weight:700;border:1px solid #E1E3E7;color:#5B6470">Utilizado</div>
+                  <div style="flex:1;text-align:center;padding:9px;border-radius:9px;font-size:12.5px;font-weight:700;border:1px solid #E1E3E7;color:#5B6470">Entregado</div>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+          <button onClick="{{ addMaterial }}" style="width:100%;margin-top:13px;background:#fff;border:1.5px dashed #C7CBD1;color:#16181C;border-radius:12px;padding:14px;font-size:15px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px" style-active="border-color:#C20E1A;color:#C20E1A">{{ ic.plus }} Agregar material</button>
+        </div>
+        </sc-if>
+
+        <!-- STEP 5 -->
+        <sc-if value="{{ step5 }}" hint-placeholder-val="{{ false }}">
+        <div style="animation:tasFade .2s both">
+          <div style="font-size:13px;color:#8A929C;font-weight:600;margin-bottom:13px">Personal que participó en la visita</div>
+          <div style="display:flex;flex-direction:column;gap:11px">
+            <sc-for list="{{ personal }}" as="p" hint-placeholder-count="1">
+              <div style="background:#fff;border:1px solid #ECEDEF;border-radius:14px;padding:14px">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:11px">
+                  <input value="{{ p.nombre }}" placeholder="Nombre" style="flex:1;padding:10px;border:1px solid #E1E3E7;border-radius:10px;font-size:14px;font-weight:600;color:#16181C;background:#fff;outline:none;margin-right:9px" style-focus="border-color:#C20E1A"/>
+                  <button onClick="{{ p.onRemove }}" style="background:#FCEBEC;border:none;color:#C20E1A;width:32px;height:32px;border-radius:9px;display:flex;align-items:center;justify-content:center;cursor:pointer;flex:none">{{ ic.trash }}</button>
+                </div>
+                <div style="margin-bottom:9px"><label style="display:block;font-size:11.5px;font-weight:700;color:#5B6470;margin-bottom:4px">Rol</label>
+                  <select style="width:100%;padding:10px;border:1px solid #E1E3E7;border-radius:10px;font-size:14px;color:#16181C;background:#fff;outline:none" style-focus="border-color:#C20E1A"><option>Técnico</option><option>Ingeniero</option><option>Supervisor</option><option>Ayudante</option></select>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:9px">
+                  <div><label style="display:block;font-size:11.5px;font-weight:700;color:#5B6470;margin-bottom:4px">Entrada</label><input type="time" value="{{ p.entrada }}" style="width:100%;padding:10px;border:1px solid #E1E3E7;border-radius:10px;font-size:13px;color:#16181C;background:#fff;outline:none" style-focus="border-color:#C20E1A"/></div>
+                  <div><label style="display:block;font-size:11.5px;font-weight:700;color:#5B6470;margin-bottom:4px">Salida</label><input type="time" value="{{ p.salida }}" style="width:100%;padding:10px;border:1px solid #E1E3E7;border-radius:10px;font-size:13px;color:#16181C;background:#fff;outline:none" style-focus="border-color:#C20E1A"/></div>
+                  <div><label style="display:block;font-size:11.5px;font-weight:700;color:#5B6470;margin-bottom:4px">Horas</label><input value="{{ p.horas }}" style="width:100%;padding:10px;border:1px solid #E1E3E7;border-radius:10px;font-size:13px;color:#16181C;background:#fff;outline:none" style-focus="border-color:#C20E1A"/></div>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+          <button onClick="{{ addPersonal }}" style="width:100%;margin-top:13px;background:#fff;border:1.5px dashed #C7CBD1;color:#16181C;border-radius:12px;padding:14px;font-size:15px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px" style-active="border-color:#C20E1A;color:#C20E1A">{{ ic.plus }} Agregar participante</button>
+        </div>
+        </sc-if>
+
+        <!-- STEP 6 -->
+        <sc-if value="{{ step6 }}" hint-placeholder-val="{{ false }}">
+        <div style="animation:tasFade .2s both">
+          <div style="display:flex;gap:10px;margin-bottom:16px">
+            <button onClick="{{ addFoto }}" style="flex:1;background:#C20E1A;color:#fff;border:none;border-radius:12px;padding:15px;font-size:14.5px;font-weight:700;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:6px" style-active="background:#A40A14">{{ ic.camera }} Capturar foto</button>
+            <button onClick="{{ addFoto }}" style="flex:1;background:#fff;color:#16181C;border:1px solid #D7D9DD;border-radius:12px;padding:15px;font-size:14.5px;font-weight:700;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:6px" style-active="border-color:#C20E1A">{{ ic.download }} Subir foto</button>
+          </div>
+          <div style="font-size:13px;color:#8A929C;font-weight:600;margin-bottom:11px">{{ fotos.length }} evidencias · toca una miniatura para reordenar</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <sc-for list="{{ fotos }}" as="f" hint-placeholder-count="3">
+              <div style="background:#fff;border:1px solid #ECEDEF;border-radius:13px;overflow:hidden">
+                <div style="position:relative;height:120px;background-image:repeating-linear-gradient(45deg,#EEF0F2 0 10px,#F6F7F8 10px 20px);display:flex;align-items:center;justify-content:center;color:#B4BAC2">
+                  {{ ic.camera }}
+                  <span style="position:absolute;top:8px;left:8px;background:{{ f.catColor }};color:#fff;font-size:10.5px;font-weight:700;padding:3px 8px;border-radius:999px">{{ f.cat }}</span>
+                  <button onClick="{{ f.onRemove }}" style="position:absolute;top:7px;right:7px;background:rgba(20,22,28,.6);border:none;color:#fff;width:26px;height:26px;border-radius:8px;display:flex;align-items:center;justify-content:center;cursor:pointer">{{ ic.x }}</button>
+                </div>
+                <div style="padding:9px 10px">
+                  <input value="{{ f.desc }}" placeholder="Descripción" style="width:100%;border:none;outline:none;font-size:12.5px;color:#16181C;background:transparent"/>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+        </sc-if>
+
+        <!-- STEP 7 -->
+        <sc-if value="{{ step7 }}" hint-placeholder-val="{{ false }}">
+        <div style="animation:tasFade .2s both">
+          <div style="background:#FFF4E5;border:1px solid #F6D9A8;border-radius:12px;padding:13px;display:flex;gap:10px;margin-bottom:16px;color:#A66400">
+            {{ ic.alert }}<div style="font-size:13px;font-weight:600;line-height:1.4">Falta agregar al menos una fotografía de evidencia "Después" y la firma del cliente.</div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:11px">
+            <div style="background:#fff;border:1px solid #ECEDEF;border-radius:14px;padding:15px">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:11px"><span style="font-size:13px;font-weight:700">Cliente y visita</span><button onClick="{{ gotoStep1 }}" style="background:transparent;border:none;color:#C20E1A;font-size:13px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:4px">{{ ic.edit }} Editar</button></div>
+              <div style="font-size:14px;color:#5B6470;line-height:1.8"><b style="color:#16181C">Empresa ABC Honduras</b> · Tegucigalpa<br/>Mantenimiento · 22 Jun 2026 · 09:00–12:30<br/>OT-4587 · Contacto: María López</div>
+            </div>
+            <div style="background:#fff;border:1px solid #ECEDEF;border-radius:14px;padding:15px">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:9px"><span style="font-size:13px;font-weight:700">Trabajo realizado</span><button onClick="{{ gotoStep2 }}" style="background:transparent;border:none;color:#C20E1A;font-size:13px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:4px">{{ ic.edit }} Editar</button></div>
+              <div style="font-size:13.5px;color:#5B6470;line-height:1.55">Mantenimiento preventivo de impresora Zebra ZT411. Limpieza de cabezal y recalibración de sensores.</div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+              <div style="background:#fff;border:1px solid #ECEDEF;border-radius:14px;padding:13px;text-align:center"><div style="font-size:24px;font-weight:700">{{ equipos.length }}</div><div style="font-size:11.5px;color:#8A929C;font-weight:600;margin-top:3px">Equipos</div></div>
+              <div style="background:#fff;border:1px solid #ECEDEF;border-radius:14px;padding:13px;text-align:center"><div style="font-size:24px;font-weight:700">{{ materiales.length }}</div><div style="font-size:11.5px;color:#8A929C;font-weight:600;margin-top:3px">Materiales</div></div>
+              <div style="background:#fff;border:1px solid #ECEDEF;border-radius:14px;padding:13px;text-align:center"><div style="font-size:24px;font-weight:700">{{ fotos.length }}</div><div style="font-size:11.5px;color:#8A929C;font-weight:600;margin-top:3px">Fotos</div></div>
+            </div>
+          </div>
+
+          <label style="display:flex;align-items:center;gap:12px;background:#fff;border:1px solid #ECEDEF;border-radius:12px;padding:14px;margin-top:16px;cursor:pointer" onClick="{{ toggleConfirm }}">
+            <span style="{{ checkStyle }}">{{ ic.check }}</span>
+            <span style="font-size:14px;font-weight:600;color:#16181C">Confirmo que la información es correcta</span>
+          </label>
+
+          <div style="display:flex;flex-direction:column;gap:10px;margin-top:16px">
+            <button onClick="{{ finalizar }}" style="width:100%;background:#C20E1A;color:#fff;border:none;border-radius:13px;padding:16px;font-size:15.5px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px" style-active="background:#A40A14">{{ ic.doc }} Finalizar y generar PDF</button>
+            <div style="display:flex;gap:10px">
+              <button onClick="{{ enviarRev }}" style="flex:1;background:#fff;color:#16181C;border:1px solid #D7D9DD;border-radius:13px;padding:14px;font-size:14px;font-weight:700;cursor:pointer" style-active="border-color:#C20E1A">Enviar para revisión</button>
+              <button onClick="{{ guardarBorr }}" style="flex:1;background:#fff;color:#16181C;border:1px solid #D7D9DD;border-radius:13px;padding:14px;font-size:14px;font-weight:700;cursor:pointer" style-active="border-color:#C20E1A">Guardar borrador</button>
+            </div>
+          </div>
+        </div>
+        </sc-if>
+
+      </div>
+
+      <!-- step nav -->
+      <div style="position:sticky;bottom:0;background:#fff;border-top:1px solid #ECEDEF;padding:13px 20px;display:flex;gap:11px">
+        <sc-if value="{{ step1 }}" hint-placeholder-val="{{ true }}"></sc-if>
+        <button onClick="{{ prev }}" style="flex:none;width:120px;background:#fff;color:#16181C;border:1px solid #D7D9DD;border-radius:12px;padding:14px;font-size:15px;font-weight:700;cursor:pointer" style-active="border-color:#C20E1A">Atrás</button>
+        <button onClick="{{ next }}" style="flex:1;background:#C20E1A;color:#fff;border:none;border-radius:12px;padding:14px;font-size:15px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:7px" style-active="background:#A40A14">Continuar {{ ic.chevR }}</button>
+      </div>
+    </div>
+    </sc-if>
+
+    <!-- PENDIENTES -->
+    <sc-if value="{{ isPend }}" hint-placeholder-val="{{ false }}">
+    <div data-scroll data-screen-label="Pendientes" style="flex:1;overflow-y:auto;background:#F4F5F7">
+      <div style="background:#fff;padding:18px 20px;border-bottom:1px solid #ECEDEF"><div style="font-size:22px;font-weight:700;letter-spacing:-.02em">Pendientes</div><div style="font-size:13.5px;color:#8A929C;margin-top:2px">Reportes que requieren tu acción</div></div>
+      <div style="padding:18px 20px">
+        <div style="font-size:13px;font-weight:700;color:#BE4708;margin-bottom:10px;display:flex;align-items:center;gap:7px">{{ ic.pen }} Pendientes de firma</div>
+        <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:22px">
+          <sc-for list="{{ secFirmaList }}" as="r" hint-placeholder-count="2">
+            <button onClick="{{ r.onOpen }}" style="text-align:left;background:#fff;border:1px solid #ECEDEF;border-radius:13px;padding:13px;cursor:pointer;display:flex;align-items:center;justify-content:between;gap:10px;width:100%" style-active="border-color:#D7D9DD">
+              <div style="flex:1">
+                <div style="font-size:12.5px;font-weight:700;color:#C20E1A">{{ r.id }}</div>
+                <div style="font-size:14.5px;font-weight:700;margin-top:4px">{{ r.cliente }}</div>
+                <div style="font-size:12px;color:#8A929C;margin-top:3px">{{ r.tipo }} · {{ r.fecha }}</div>
+              </div>
+              <span style="display:inline-flex;align-items:center;gap:5px;background:{{ r.sBg }};color:{{ r.sFg }};font-size:11px;font-weight:700;padding:4px 9px;border-radius:999px;flex:none"><span style="width:6px;height:6px;border-radius:50%;background:{{ r.sDot }}"></span>{{ r.status }}</span>
+            </button>
+          </sc-for>
+        </div>
+        <div style="font-size:13px;font-weight:700;color:#A66400;margin-bottom:10px;display:flex;align-items:center;gap:7px">{{ ic.clock }} En revisión / rechazados</div>
+        <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:22px">
+          <sc-for list="{{ secRevisionList }}" as="r" hint-placeholder-count="2">
+            <button onClick="{{ r.onOpen }}" style="text-align:left;background:#fff;border:1px solid #ECEDEF;border-radius:13px;padding:13px;cursor:pointer;display:flex;align-items:center;gap:10px;width:100%" style-active="border-color:#D7D9DD">
+              <div style="flex:1"><div style="font-size:12.5px;font-weight:700;color:#C20E1A">{{ r.id }}</div><div style="font-size:14.5px;font-weight:700;margin-top:4px">{{ r.cliente }}</div><div style="font-size:12px;color:#8A929C;margin-top:3px">{{ r.tipo }} · {{ r.fecha }}</div></div>
+              <span style="display:inline-flex;align-items:center;gap:5px;background:{{ r.sBg }};color:{{ r.sFg }};font-size:11px;font-weight:700;padding:4px 9px;border-radius:999px;flex:none"><span style="width:6px;height:6px;border-radius:50%;background:{{ r.sDot }}"></span>{{ r.status }}</span>
+            </button>
+          </sc-for>
+        </div>
+        <div style="font-size:13px;font-weight:700;color:#5B6470;margin-bottom:10px;display:flex;align-items:center;gap:7px">{{ ic.edit }} Borradores</div>
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <sc-for list="{{ secBorradorList }}" as="r" hint-placeholder-count="1">
+            <button onClick="{{ r.onOpen }}" style="text-align:left;background:#fff;border:1px solid #ECEDEF;border-radius:13px;padding:13px;cursor:pointer;display:flex;align-items:center;gap:10px;width:100%" style-active="border-color:#D7D9DD">
+              <div style="flex:1"><div style="font-size:12.5px;font-weight:700;color:#C20E1A">{{ r.id }}</div><div style="font-size:14.5px;font-weight:700;margin-top:4px">{{ r.cliente }}</div><div style="font-size:12px;color:#8A929C;margin-top:3px">{{ r.tipo }} · {{ r.fecha }}</div></div>
+              <span style="display:inline-flex;align-items:center;gap:5px;background:{{ r.sBg }};color:{{ r.sFg }};font-size:11px;font-weight:700;padding:4px 9px;border-radius:999px;flex:none"><span style="width:6px;height:6px;border-radius:50%;background:{{ r.sDot }}"></span>{{ r.status }}</span>
+            </button>
+          </sc-for>
+        </div>
+      </div>
+    </div>
+    </sc-if>
+
+    <!-- PERFIL -->
+    <sc-if value="{{ isPerfil }}" hint-placeholder-val="{{ false }}">
+    <div data-scroll data-screen-label="Perfil" style="flex:1;overflow-y:auto;background:#F4F5F7">
+      <div style="background:#fff;padding:26px 20px;border-bottom:1px solid #ECEDEF;text-align:center">
+        <div style="width:78px;height:78px;border-radius:50%;background:#C20E1A;color:#fff;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:700;margin:0 auto 12px">CH</div>
+        <div style="font-size:20px;font-weight:700">Carlos Hernández</div>
+        <div style="font-size:13.5px;color:#8A929C;margin-top:3px">Supervisor de Servicio Técnico</div>
+        <div style="display:inline-flex;align-items:center;gap:6px;margin-top:10px;background:#FDEDED;color:#C20E1A;font-size:12px;font-weight:700;padding:5px 12px;border-radius:999px">TAS Honduras · Tegucigalpa</div>
+      </div>
+      <div style="padding:18px 20px">
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:18px">
+          <div style="background:#fff;border:1px solid #ECEDEF;border-radius:13px;padding:14px;text-align:center"><div style="font-size:24px;font-weight:700;color:#117A3B">28</div><div style="font-size:11px;color:#8A929C;font-weight:600;margin-top:3px">Este mes</div></div>
+          <div style="background:#fff;border:1px solid #ECEDEF;border-radius:13px;padding:14px;text-align:center"><div style="font-size:24px;font-weight:700;color:#BE4708">4</div><div style="font-size:11px;color:#8A929C;font-weight:600;margin-top:3px">Pendientes</div></div>
+          <div style="background:#fff;border:1px solid #ECEDEF;border-radius:13px;padding:14px;text-align:center"><div style="font-size:24px;font-weight:700">214</div><div style="font-size:11px;color:#8A929C;font-weight:600;margin-top:3px">Total</div></div>
+        </div>
+        <div style="background:#fff;border:1px solid #ECEDEF;border-radius:14px;overflow:hidden">
+          <div style="display:flex;align-items:center;gap:12px;padding:15px;border-bottom:1px solid #F1F2F4;color:#5B6470">{{ ic.mail }}<div style="flex:1"><div style="font-size:11.5px;color:#8A929C;font-weight:600">Correo</div><div style="font-size:14px;color:#16181C;font-weight:600;margin-top:1px">chernandez@tashn.com</div></div></div>
+          <div style="display:flex;align-items:center;gap:12px;padding:15px;border-bottom:1px solid #F1F2F4;color:#5B6470">{{ ic.phone }}<div style="flex:1"><div style="font-size:11.5px;color:#8A929C;font-weight:600">Teléfono</div><div style="font-size:14px;color:#16181C;font-weight:600;margin-top:1px">+504 9912-3344</div></div></div>
+          <div style="display:flex;align-items:center;gap:12px;padding:15px;color:#5B6470">{{ ic.board }}<div style="flex:1"><div style="font-size:11.5px;color:#8A929C;font-weight:600">Zona asignada</div><div style="font-size:14px;color:#16181C;font-weight:600;margin-top:1px">Región Centro · Tegucigalpa</div></div></div>
+        </div>
+        <div style="background:#fff;border:1px solid #ECEDEF;border-radius:14px;overflow:hidden;margin-top:14px">
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:15px;border-bottom:1px solid #F1F2F4;cursor:pointer"><span style="font-size:14.5px;font-weight:600">Sincronización y datos offline</span><span style="color:#9AA2AD">{{ ic.chevR }}</span></div>
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:15px;border-bottom:1px solid #F1F2F4;cursor:pointer"><span style="font-size:14.5px;font-weight:600">Notificaciones</span><span style="color:#9AA2AD">{{ ic.chevR }}</span></div>
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:15px;cursor:pointer"><span style="font-size:14.5px;font-weight:600;color:#C20E1A">Cerrar sesión</span></div>
+        </div>
+      </div>
+    </div>
+    </sc-if>
+
+    <!-- DETAIL -->
+    <sc-if value="{{ isDetail }}" hint-placeholder-val="{{ false }}">
+    <div data-scroll data-screen-label="Detalle RS" style="flex:1;overflow-y:auto;background:#F4F5F7">
+      <div style="position:sticky;top:0;z-index:5;background:#fff;border-bottom:1px solid #ECEDEF;padding:14px 20px;display:flex;align-items:center;gap:12px">
+        <button onClick="{{ back }}" style="background:transparent;border:none;cursor:pointer;color:#16181C;padding:0;display:flex">{{ ic.back }}</button>
+        <div style="flex:1"><div style="font-size:13px;color:#8A929C;font-weight:600">Reporte de servicio</div></div>
+        <button onClick="{{ onShare }}" style="background:transparent;border:none;cursor:pointer;color:#5B6470;padding:0">{{ ic.share }}</button>
+      </div>
+      <div style="padding:18px 20px">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px">
+          <div style="font-size:26px;font-weight:800;letter-spacing:-.02em;color:#16181C">{{ detail.id }}</div>
+          <span style="display:inline-flex;align-items:center;gap:6px;background:{{ detail.sBg }};color:{{ detail.sFg }};font-size:12px;font-weight:700;padding:6px 11px;border-radius:999px"><span style="width:7px;height:7px;border-radius:50%;background:{{ detail.sDot }}"></span>{{ detail.status }}</span>
+        </div>
+        <div style="font-size:16px;font-weight:700;margin-top:4px">{{ detail.cliente }}</div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:1px;background:#ECEDEF;border:1px solid #ECEDEF;border-radius:13px;overflow:hidden;margin-top:14px">
+          <div style="background:#fff;padding:12px 14px"><div style="font-size:11px;color:#8A929C;font-weight:600">Fecha</div><div style="font-size:14px;font-weight:600;margin-top:2px">{{ detail.fecha }}</div></div>
+          <div style="background:#fff;padding:12px 14px"><div style="font-size:11px;color:#8A929C;font-weight:600">Tipo de visita</div><div style="font-size:14px;font-weight:600;margin-top:2px">{{ detail.tipo }}</div></div>
+          <div style="background:#fff;padding:12px 14px"><div style="font-size:11px;color:#8A929C;font-weight:600">Supervisor</div><div style="font-size:14px;font-weight:600;margin-top:2px">{{ detail.tecnico }}</div></div>
+          <div style="background:#fff;padding:12px 14px"><div style="font-size:11px;color:#8A929C;font-weight:600">Ubicación</div><div style="font-size:14px;font-weight:600;margin-top:2px">{{ detail.ubic }}</div></div>
+        </div>
+
+        <!-- timeline -->
+        <div style="background:#fff;border:1px solid #ECEDEF;border-radius:14px;padding:16px;margin-top:14px">
+          <div style="font-size:14px;font-weight:700;margin-bottom:14px">Línea de tiempo</div>
+          <div style="display:flex;flex-direction:column;gap:0">
+            <div style="display:flex;gap:12px"><div style="display:flex;flex-direction:column;align-items:center"><div style="width:11px;height:11px;border-radius:50%;background:#16A34A"></div><div style="width:2px;flex:1;background:#E5E7EB"></div></div><div style="padding-bottom:16px"><div style="font-size:13.5px;font-weight:700">Reporte creado</div><div style="font-size:12px;color:#8A929C;margin-top:2px">Carlos Hernández · 22 Jun, 08:15</div></div></div>
+            <div style="display:flex;gap:12px"><div style="display:flex;flex-direction:column;align-items:center"><div style="width:11px;height:11px;border-radius:50%;background:#16A34A"></div><div style="width:2px;flex:1;background:#E5E7EB"></div></div><div style="padding-bottom:16px"><div style="font-size:13.5px;font-weight:700">Enviado para revisión</div><div style="font-size:12px;color:#8A929C;margin-top:2px">22 Jun, 14:02</div></div></div>
+            <div style="display:flex;gap:12px"><div style="display:flex;flex-direction:column;align-items:center"><div style="width:11px;height:11px;border-radius:50%;background:#16A34A"></div><div style="width:2px;flex:1;background:#E5E7EB"></div></div><div style="padding-bottom:16px"><div style="font-size:13.5px;font-weight:700">Aprobado por supervisor</div><div style="font-size:12px;color:#8A929C;margin-top:2px">José Medina · 22 Jun, 16:30</div></div></div>
+            <div style="display:flex;gap:12px"><div style="display:flex;flex-direction:column;align-items:center"><div style="width:11px;height:11px;border-radius:50%;background:#EA580C;animation:tasPulse 1.6s infinite"></div></div><div><div style="font-size:13.5px;font-weight:700;color:#BE4708">Pendiente de firma del cliente</div><div style="font-size:12px;color:#8A929C;margin-top:2px">En espera</div></div></div>
+          </div>
+        </div>
+
+        <!-- collapsible: cliente -->
+        <div style="background:#fff;border:1px solid #ECEDEF;border-radius:14px;margin-top:14px;overflow:hidden">
+          <button onClick="{{ secCliente.onToggle }}" style="width:100%;display:flex;align-items:center;justify-content:space-between;padding:15px;background:transparent;border:none;cursor:pointer"><span style="font-size:14.5px;font-weight:700">Cliente y visita</span><span style="color:#9AA2AD">{{ secCliente.caret }}</span></button>
+          <sc-if value="{{ openCliente }}" hint-placeholder-val="{{ true }}"><div style="padding:0 15px 15px;font-size:13.5px;color:#5B6470;line-height:1.85;border-top:1px solid #F1F2F4;padding-top:13px">Contacto: <b style="color:#16181C">María López</b> · mlopez@empresaabc.hn<br/>+504 9988-7766 · OT-4587<br/>Llegada 09:00 · Salida 12:30</div></sc-if>
+        </div>
+        <!-- trabajo -->
+        <div style="background:#fff;border:1px solid #ECEDEF;border-radius:14px;margin-top:11px;overflow:hidden">
+          <button onClick="{{ secTrabajo.onToggle }}" style="width:100%;display:flex;align-items:center;justify-content:space-between;padding:15px;background:transparent;border:none;cursor:pointer"><span style="font-size:14.5px;font-weight:700">Trabajo realizado</span><span style="color:#9AA2AD">{{ secTrabajo.caret }}</span></button>
+          <sc-if value="{{ openTrabajo }}" hint-placeholder-val="{{ true }}"><div style="padding:0 15px 15px;font-size:13.5px;color:#5B6470;line-height:1.6;border-top:1px solid #F1F2F4;padding-top:13px">Mantenimiento preventivo de la impresora Zebra ZT411: limpieza de cabezal, recalibración de sensores y prueba de impresión. Rodillo con desgaste — se recomienda reemplazo.</div></sc-if>
+        </div>
+        <!-- equipos -->
+        <div style="background:#fff;border:1px solid #ECEDEF;border-radius:14px;margin-top:11px;overflow:hidden">
+          <button onClick="{{ secEquipos.onToggle }}" style="width:100%;display:flex;align-items:center;justify-content:space-between;padding:15px;background:transparent;border:none;cursor:pointer"><span style="font-size:14.5px;font-weight:700">Equipos <span style="color:#9AA2AD;font-weight:600">· {{ equipos.length }}</span></span><span style="color:#9AA2AD">{{ secEquipos.caret }}</span></button>
+          <sc-if value="{{ openEquipos }}" hint-placeholder-val="{{ false }}"><div style="border-top:1px solid #F1F2F4;padding:13px 15px"><sc-for list="{{ equipos }}" as="e" hint-placeholder-count="1"><div style="font-size:13.5px;color:#5B6470;line-height:1.6"><b style="color:#16181C">{{ e.nombre }}</b> — {{ e.marca }} {{ e.modelo }}<br/>Serie: {{ e.serie }} · {{ e.ei }} → {{ e.ef }}</div></sc-for></div></sc-if>
+        </div>
+        <!-- materiales -->
+        <div style="background:#fff;border:1px solid #ECEDEF;border-radius:14px;margin-top:11px;overflow:hidden">
+          <button onClick="{{ secMateriales.onToggle }}" style="width:100%;display:flex;align-items:center;justify-content:space-between;padding:15px;background:transparent;border:none;cursor:pointer"><span style="font-size:14.5px;font-weight:700">Materiales <span style="color:#9AA2AD;font-weight:600">· {{ materiales.length }}</span></span><span style="color:#9AA2AD">{{ secMateriales.caret }}</span></button>
+          <sc-if value="{{ openMateriales }}" hint-placeholder-val="{{ false }}"><div style="border-top:1px solid #F1F2F4;padding:13px 15px;display:flex;flex-direction:column;gap:7px"><sc-for list="{{ materiales }}" as="m" hint-placeholder-count="2"><div style="display:flex;justify-content:space-between;font-size:13.5px"><span style="color:#16181C;font-weight:600">{{ m.prod }}</span><span style="color:#8A929C">{{ m.cant }} {{ m.unidad }} · {{ m.tipo }}</span></div></sc-for></div></sc-if>
+        </div>
+        <!-- personal -->
+        <div style="background:#fff;border:1px solid #ECEDEF;border-radius:14px;margin-top:11px;overflow:hidden">
+          <button onClick="{{ secPersonal.onToggle }}" style="width:100%;display:flex;align-items:center;justify-content:space-between;padding:15px;background:transparent;border:none;cursor:pointer"><span style="font-size:14.5px;font-weight:700">Personal <span style="color:#9AA2AD;font-weight:600">· {{ personal.length }}</span></span><span style="color:#9AA2AD">{{ secPersonal.caret }}</span></button>
+          <sc-if value="{{ openPersonal }}" hint-placeholder-val="{{ false }}"><div style="border-top:1px solid #F1F2F4;padding:13px 15px"><sc-for list="{{ personal }}" as="p" hint-placeholder-count="1"><div style="display:flex;justify-content:space-between;font-size:13.5px"><span style="color:#16181C;font-weight:600">{{ p.nombre }}</span><span style="color:#8A929C">{{ p.rol }} · {{ p.horas }}h</span></div></sc-for></div></sc-if>
+        </div>
+        <!-- fotos -->
+        <div style="background:#fff;border:1px solid #ECEDEF;border-radius:14px;margin-top:11px;overflow:hidden">
+          <button onClick="{{ secFotos.onToggle }}" style="width:100%;display:flex;align-items:center;justify-content:space-between;padding:15px;background:transparent;border:none;cursor:pointer"><span style="font-size:14.5px;font-weight:700">Galería de fotografías <span style="color:#9AA2AD;font-weight:600">· {{ fotos.length }}</span></span><span style="color:#9AA2AD">{{ secFotos.caret }}</span></button>
+          <sc-if value="{{ openFotos }}" hint-placeholder-val="{{ false }}"><div style="border-top:1px solid #F1F2F4;padding:13px 15px"><div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px"><sc-for list="{{ fotos }}" as="f" hint-placeholder-count="3"><div style="aspect-ratio:1;border-radius:9px;background-image:repeating-linear-gradient(45deg,#EEF0F2 0 8px,#F6F7F8 8px 16px);position:relative;display:flex;align-items:center;justify-content:center;color:#B4BAC2"><span style="position:absolute;bottom:5px;left:5px;background:{{ f.catColor }};color:#fff;font-size:9px;font-weight:700;padding:2px 6px;border-radius:999px">{{ f.cat }}</span></div></sc-for></div></div></sc-if>
+        </div>
+
+        <!-- PDF preview -->
+        <div style="margin-top:18px">
+          <div style="font-size:14px;font-weight:700;margin-bottom:10px">Vista previa del PDF</div>
+          <div style="background:#fff;border:1px solid #ECEDEF;border-radius:13px;padding:16px;box-shadow:0 8px 20px -12px rgba(20,22,28,.25)">
+            <div style="display:flex;align-items:center;justify-content:space-between;border-bottom:2px solid #C20E1A;padding-bottom:10px;margin-bottom:12px"><img src="assets/tas-mark.png" style="height:20px"/><span style="font-size:11px;font-weight:700;color:#5B6470">REPORTE DE SERVICIO</span></div>
+            <div style="font-size:13px;font-weight:700;margin-bottom:8px">{{ detail.id }} · {{ detail.cliente }}</div>
+            <div style="height:7px;background:#F1F2F4;border-radius:3px;margin-bottom:6px;width:100%"></div>
+            <div style="height:7px;background:#F1F2F4;border-radius:3px;margin-bottom:6px;width:85%"></div>
+            <div style="height:7px;background:#F1F2F4;border-radius:3px;margin-bottom:6px;width:92%"></div>
+            <div style="height:7px;background:#F1F2F4;border-radius:3px;margin-bottom:14px;width:70%"></div>
+            <div style="display:flex;gap:8px;margin-bottom:6px"><div style="height:7px;background:#F1F2F4;border-radius:3px;flex:1"></div><div style="height:7px;background:#F1F2F4;border-radius:3px;flex:1"></div></div>
+            <button onClick="{{ onDownload }}" style="width:100%;margin-top:12px;background:#F4F5F7;border:1px solid #E1E3E7;border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:#16181C;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:7px">{{ ic.eye }} Ver PDF completo</button>
+          </div>
+        </div>
+
+        <!-- actions -->
+        <div style="display:flex;flex-direction:column;gap:10px;margin-top:18px">
+          <div style="display:flex;gap:10px">
+            <button onClick="{{ onDownload }}" style="flex:1;background:#16181C;color:#fff;border:none;border-radius:12px;padding:14px;font-size:14px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:7px" style-active="background:#000">{{ ic.download }} Descargar</button>
+            <button onClick="{{ onShare }}" style="flex:1;background:#fff;color:#16181C;border:1px solid #D7D9DD;border-radius:12px;padding:14px;font-size:14px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:7px" style-active="border-color:#C20E1A">{{ ic.share }} Compartir</button>
+          </div>
+          <button onClick="{{ onSendClient }}" style="width:100%;background:#fff;color:#16181C;border:1px solid #D7D9DD;border-radius:12px;padding:14px;font-size:14px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:7px" style-active="border-color:#C20E1A">{{ ic.send }} Enviar al cliente</button>
+          <button onClick="{{ onReqSign }}" style="width:100%;background:#C20E1A;color:#fff;border:none;border-radius:12px;padding:15px;font-size:15px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px" style-active="background:#A40A14">{{ ic.pen }} Solicitar firma</button>
+          <button onClick="{{ onCorrection }}" style="width:100%;background:transparent;color:#C20E1A;border:none;padding:6px;font-size:14px;font-weight:700;cursor:pointer">Crear corrección</button>
+        </div>
+      </div>
+    </div>
+    </sc-if>
+
+    <!-- BOTTOM NAV -->
+    <div style="flex:none;background:#fff;border-top:1px solid #ECEDEF;display:flex;align-items:flex-end;justify-content:space-around;padding:8px 12px 22px;position:relative">
+      <button onClick="{{ goHome }}" style="background:transparent;border:none;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:3px;color:{{ cHome }};flex:1;padding:4px 0">{{ ic.home }}<span style="font-size:10.5px;font-weight:700">Reportes</span></button>
+      <button onClick="{{ goPend }}" style="background:transparent;border:none;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:3px;color:{{ cPend }};flex:1;padding:4px 0">{{ ic.clock }}<span style="font-size:10.5px;font-weight:700">Pendientes</span></button>
+      <button onClick="{{ goForm }}" style="background:#C20E1A;border:none;cursor:pointer;width:56px;height:56px;border-radius:50%;color:#fff;display:flex;align-items:center;justify-content:center;flex:none;margin:0 4px;box-shadow:0 8px 18px -6px rgba(194,14,26,.7)" style-active="background:#A40A14">{{ ic.plus }}</button>
+      <button onClick="{{ goPerfil }}" style="background:transparent;border:none;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:3px;color:{{ cPerfil }};flex:1;padding:4px 0">{{ ic.user }}<span style="font-size:10.5px;font-weight:700">Perfil</span></button>
+    </div>
+
+    <!-- toast -->
+    <sc-if value="{{ hasToast }}" hint-placeholder-val="{{ false }}">
+      <div style="position:absolute;bottom:96px;left:50%;transform:translateX(-50%);background:#16181C;color:#fff;font-size:13.5px;font-weight:600;padding:11px 18px;border-radius:11px;box-shadow:0 10px 24px -8px rgba(0,0,0,.5);animation:tasFade .2s both;white-space:nowrap;z-index:50">{{ toast }}</div>
+    </sc-if>
+
+    <!-- signature modal -->
+    <sc-if value="{{ sigModal }}" hint-placeholder-val="{{ false }}">
+      <div onClick="{{ closeSig }}" style="position:absolute;inset:0;background:rgba(20,22,28,.5);display:flex;align-items:flex-end;z-index:60">
+        <div style="background:#fff;width:100%;border-radius:24px 24px 0 0;padding:24px 22px 28px;animation:tasFade .2s both">
+          <div style="width:42px;height:5px;background:#E1E3E7;border-radius:3px;margin:0 auto 18px"></div>
+          <div style="width:54px;height:54px;border-radius:14px;background:#FDEDED;color:#C20E1A;display:flex;align-items:center;justify-content:center;margin-bottom:14px">{{ ic.pen }}</div>
+          <div style="font-size:18px;font-weight:700;margin-bottom:7px">Firma electrónica</div>
+          <div style="font-size:14px;color:#5B6470;line-height:1.5;margin-bottom:20px">{{ sigMsg }} El cliente recibirá una solicitud para firmar el reporte desde su dispositivo.</div>
+          <button onClick="{{ closeSig }}" style="width:100%;background:#C20E1A;color:#fff;border:none;border-radius:12px;padding:15px;font-size:15px;font-weight:700;cursor:pointer" style-active="background:#A40A14">Entendido</button>
+        </div>
+      </div>
+    </sc-if>
+
+  </div>
+  </sc-if>
+
+  <!-- ===================== ESCRITORIO ===================== -->
+  <sc-if value="{{ isDesktop }}" hint-placeholder-val="{{ false }}">
+  <div data-screen-label="Escritorio" style="width:100%;max-width:1200px;height:760px;background:#fff;border-radius:16px;border:1px solid #DCDEE2;box-shadow:0 24px 60px -24px rgba(20,22,28,.3);display:flex;overflow:hidden;position:relative">
+
+    <!-- sidebar -->
+    <div style="width:236px;flex:none;background:#FAFBFC;border-right:1px solid #ECEDEF;display:flex;flex-direction:column;padding:18px 14px">
+      <div style="padding:4px 6px 18px"><img src="assets/tas-mark.png" style="height:26px"/></div>
+      <button onClick="{{ dNew }}" style="background:#C20E1A;color:#fff;border:none;border-radius:11px;padding:12px;font-size:14px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:16px" style-active="background:#A40A14">{{ ic.plus }} Crear nuevo reporte</button>
+      <div style="display:flex;flex-direction:column;gap:4px">
+        <sc-for list="{{ dnav }}" as="n" hint-placeholder-count="5"><button onClick="{{ n.onClick }}" style="{{ n.style }}">{{ n.icon }}{{ n.label }}</button></sc-for>
+      </div>
+      <div style="margin-top:auto;display:flex;align-items:center;gap:10px;padding:10px;border-top:1px solid #ECEDEF">
+        <div style="width:36px;height:36px;border-radius:50%;background:#C20E1A;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px">CH</div>
+        <div style="flex:1;min-width:0"><div style="font-size:13.5px;font-weight:700">Carlos Hernández</div><div style="font-size:11.5px;color:#8A929C">Supervisor</div></div>
+      </div>
+    </div>
+
+    <!-- main -->
+    <div style="flex:1;display:flex;flex-direction:column;min-width:0">
+      <div style="flex:none;height:64px;border-bottom:1px solid #ECEDEF;display:flex;align-items:center;gap:16px;padding:0 22px">
+        <div style="font-size:18px;font-weight:700;letter-spacing:-.01em">{{ dTitle }}</div>
+        <div style="flex:1"></div>
+        <div style="display:flex;align-items:center;gap:8px;background:#F4F5F7;border:1px solid #ECEDEF;border-radius:10px;padding:9px 12px;width:280px;color:#9AA2AD" style-focus-within="border-color:#C20E1A">{{ ic.search }}<input value="{{ search }}" onChange="{{ onSearch }}" placeholder="Buscar RS, cliente o ubicación" style="border:none;outline:none;background:transparent;flex:1;font-size:13.5px;color:#16181C"/></div>
+        <div style="position:relative;color:#5B6470">{{ ic.bell }}<span style="position:absolute;top:-2px;right:-2px;width:8px;height:8px;background:#C20E1A;border-radius:50%;border:1.5px solid #fff"></span></div>
+      </div>
+
+      <div data-scroll style="flex:1;overflow-y:auto;display:flex;min-width:0">
+        <div style="flex:1;min-width:0;padding:22px">
+
+          <!-- TABLE VIEW -->
+          <sc-if value="{{ isDTable }}" hint-placeholder-val="{{ true }}">
+          <div>
+            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:20px">
+              <sc-for list="{{ metrics }}" as="m" hint-placeholder-count="4">
+                <div style="background:#fff;border:1px solid #ECEDEF;border-radius:13px;padding:16px">
+                  <div style="font-size:12.5px;color:#8A929C;font-weight:600">{{ m.label }}</div>
+                  <div style="font-size:28px;font-weight:700;letter-spacing:-.02em;margin-top:6px;color:{{ m.color }}">{{ m.n }}</div>
+                  <div style="font-size:11.5px;color:#9AA2AD;font-weight:500;margin-top:3px">{{ m.sub }}</div>
+                </div>
+              </sc-for>
+            </div>
+
+            <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap">
+              <sc-for list="{{ chips }}" as="ch" hint-placeholder-count="6"><button onClick="{{ ch.onClick }}" style="{{ ch.style }}">{{ ch.label }}</button></sc-for>
+              <div style="flex:1"></div>
+              <button style="display:flex;align-items:center;gap:7px;background:#fff;border:1px solid #E1E3E7;border-radius:9px;padding:8px 13px;font-size:13px;font-weight:600;color:#5B6470;cursor:pointer">{{ ic.cols }} Columnas</button>
+              <button onClick="{{ dDownload }}" style="display:flex;align-items:center;gap:7px;background:#fff;border:1px solid #E1E3E7;border-radius:9px;padding:8px 13px;font-size:13px;font-weight:600;color:#5B6470;cursor:pointer">{{ ic.download }} Exportar</button>
+            </div>
+
+            <div style="border:1px solid #ECEDEF;border-radius:13px;overflow:hidden">
+              <div style="display:grid;grid-template-columns:1.1fr 1.7fr 1.3fr 1.2fr 1fr 1.1fr;gap:0;background:#FAFBFC;border-bottom:1px solid #ECEDEF;padding:0 16px">
+                <div style="font-size:11.5px;font-weight:700;color:#8A929C;text-transform:uppercase;letter-spacing:.04em;padding:11px 0">N° RS</div>
+                <div style="font-size:11.5px;font-weight:700;color:#8A929C;text-transform:uppercase;letter-spacing:.04em;padding:11px 0">Cliente</div>
+                <div style="font-size:11.5px;font-weight:700;color:#8A929C;text-transform:uppercase;letter-spacing:.04em;padding:11px 0">Ubicación</div>
+                <div style="font-size:11.5px;font-weight:700;color:#8A929C;text-transform:uppercase;letter-spacing:.04em;padding:11px 0">Tipo</div>
+                <div style="font-size:11.5px;font-weight:700;color:#8A929C;text-transform:uppercase;letter-spacing:.04em;padding:11px 0">Fecha</div>
+                <div style="font-size:11.5px;font-weight:700;color:#8A929C;text-transform:uppercase;letter-spacing:.04em;padding:11px 0">Estado</div>
+              </div>
+              <sc-for list="{{ deskList }}" as="r" hint-placeholder-count="8">
+                <div onClick="{{ r.onSelect }}" style="{{ r.rowStyle }}">
+                  <div style="display:grid;grid-template-columns:1.1fr 1.7fr 1.3fr 1.2fr 1fr 1.1fr;gap:0;padding:0 16px;align-items:center">
+                    <div style="font-size:13px;font-weight:700;color:#C20E1A;padding:13px 0">{{ r.id }}</div>
+                    <div style="font-size:13.5px;font-weight:600;padding:13px 0">{{ r.cliente }}</div>
+                    <div style="font-size:13px;color:#5B6470;padding:13px 0">{{ r.ubic }}</div>
+                    <div style="font-size:13px;color:#5B6470;padding:13px 0">{{ r.tipo }}</div>
+                    <div style="font-size:13px;color:#5B6470;padding:13px 0">{{ r.fecha }}</div>
+                    <div style="padding:13px 0"><span style="display:inline-flex;align-items:center;gap:5px;background:{{ r.sBg }};color:{{ r.sFg }};font-size:11.5px;font-weight:700;padding:4px 9px;border-radius:999px"><span style="width:6px;height:6px;border-radius:50%;background:{{ r.sDot }}"></span>{{ r.status }}</span></div>
+                  </div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+          </sc-if>
+
+          <!-- DESKTOP FORM (two columns) -->
+          <sc-if value="{{ isDForm }}" hint-placeholder-val="{{ false }}">
+          <div style="max-width:880px">
+            <div style="display:flex;align-items:center;gap:6px;font-size:13px;color:#8A929C;font-weight:600;margin-bottom:16px"><span style="color:#117A3B;display:inline-flex;align-items:center;gap:5px">{{ ic.check }} Guardado automático</span> · Borrador RS-2026-00125</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px">
+              <div style="background:#fff;border:1px solid #ECEDEF;border-radius:14px;padding:18px">
+                <div style="font-size:14px;font-weight:700;margin-bottom:14px;color:#C20E1A">1 · Cliente y visita</div>
+                <div style="margin-bottom:13px"><label style="display:block;font-size:12px;font-weight:700;color:#5B6470;margin-bottom:5px">Cliente</label><input value="Empresa ABC Honduras" style="width:100%;padding:11px;border:1px solid #E1E3E7;border-radius:10px;font-size:14px;color:#16181C;background:#fff;outline:none" style-focus="border-color:#C20E1A"/></div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:13px"><div><label style="display:block;font-size:12px;font-weight:700;color:#5B6470;margin-bottom:5px">Contacto</label><input value="María López" style="width:100%;padding:11px;border:1px solid #E1E3E7;border-radius:10px;font-size:14px;color:#16181C;background:#fff;outline:none" style-focus="border-color:#C20E1A"/></div><div><label style="display:block;font-size:12px;font-weight:700;color:#5B6470;margin-bottom:5px">Teléfono</label><input value="+504 9988-7766" style="width:100%;padding:11px;border:1px solid #E1E3E7;border-radius:10px;font-size:14px;color:#16181C;background:#fff;outline:none" style-focus="border-color:#C20E1A"/></div></div>
+                <div style="margin-bottom:13px"><label style="display:block;font-size:12px;font-weight:700;color:#5B6470;margin-bottom:5px">Ubicación</label><input value="Tegucigalpa, Col. Palmira" style="width:100%;padding:11px;border:1px solid #E1E3E7;border-radius:10px;font-size:14px;color:#16181C;background:#fff;outline:none" style-focus="border-color:#C20E1A"/></div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px"><div><label style="display:block;font-size:12px;font-weight:700;color:#5B6470;margin-bottom:5px">Tipo de visita</label><select style="width:100%;padding:11px;border:1px solid #E1E3E7;border-radius:10px;font-size:14px;color:#16181C;background:#fff;outline:none" style-focus="border-color:#C20E1A"><option>Mantenimiento</option><option>Instalación</option><option>Soporte</option><option>Reparación</option></select></div><div><label style="display:block;font-size:12px;font-weight:700;color:#5B6470;margin-bottom:5px">Orden de trabajo</label><input value="OT-4587" style="width:100%;padding:11px;border:1px solid #E1E3E7;border-radius:10px;font-size:14px;color:#16181C;background:#fff;outline:none" style-focus="border-color:#C20E1A"/></div></div>
+              </div>
+              <div style="background:#fff;border:1px solid #ECEDEF;border-radius:14px;padding:18px">
+                <div style="font-size:14px;font-weight:700;margin-bottom:14px;color:#C20E1A">2 · Trabajo realizado</div>
+                <label style="display:block;font-size:12px;font-weight:700;color:#5B6470;margin-bottom:5px">Descripción</label>
+                <textarea rows="4" style="width:100%;padding:11px;border:1px solid #E1E3E7;border-radius:10px;font-size:14px;color:#16181C;background:#fff;outline:none;resize:none;line-height:1.5;margin-bottom:13px" style-focus="border-color:#C20E1A">Mantenimiento preventivo de impresora Zebra ZT411. Limpieza de cabezal y recalibración de sensores.</textarea>
+                <label style="display:block;font-size:12px;font-weight:700;color:#5B6470;margin-bottom:5px">Recomendaciones</label>
+                <textarea rows="3" style="width:100%;padding:11px;border:1px solid #E1E3E7;border-radius:10px;font-size:14px;color:#16181C;background:#fff;outline:none;resize:none;line-height:1.5" style-focus="border-color:#C20E1A">Reemplazar rodillo de impresión en próxima visita.</textarea>
+              </div>
+            </div>
+            <div style="background:#fff;border:1px solid #ECEDEF;border-radius:14px;padding:18px;margin-top:18px">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:13px"><div style="font-size:14px;font-weight:700;color:#C20E1A">3 · Equipos intervenidos</div><button onClick="{{ addEquipo }}" style="background:#FDEDED;border:none;color:#C20E1A;border-radius:9px;padding:8px 13px;font-size:13px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:6px">{{ ic.plus }} Agregar</button></div>
+              <div style="border:1px solid #ECEDEF;border-radius:11px;overflow:hidden">
+                <div style="display:grid;grid-template-columns:2fr 1fr 1.2fr 1.2fr 40px;background:#FAFBFC;border-bottom:1px solid #ECEDEF;padding:0 14px"><div style="font-size:11px;font-weight:700;color:#8A929C;padding:9px 0">EQUIPO</div><div style="font-size:11px;font-weight:700;color:#8A929C;padding:9px 0">MARCA</div><div style="font-size:11px;font-weight:700;color:#8A929C;padding:9px 0">SERIE</div><div style="font-size:11px;font-weight:700;color:#8A929C;padding:9px 0">ESTADO FINAL</div><div></div></div>
+                <sc-for list="{{ equipos }}" as="e" hint-placeholder-count="1"><div style="display:grid;grid-template-columns:2fr 1fr 1.2fr 1.2fr 40px;padding:0 14px;border-bottom:1px solid #F1F2F4;align-items:center"><div style="font-size:13px;font-weight:600;padding:11px 0">{{ e.nombre }}</div><div style="font-size:13px;color:#5B6470;padding:11px 0">{{ e.marca }} {{ e.modelo }}</div><div style="font-size:13px;color:#5B6470;padding:11px 0">{{ e.serie }}</div><div style="font-size:13px;color:#5B6470;padding:11px 0">{{ e.ef }}</div><button onClick="{{ e.onRemove }}" style="background:transparent;border:none;color:#C20E1A;cursor:pointer;padding:11px 0">{{ ic.trash }}</button></div></sc-for>
+              </div>
+            </div>
+            <div style="display:flex;gap:10px;margin-top:18px;justify-content:flex-end">
+              <button onClick="{{ guardarBorr }}" style="background:#fff;color:#16181C;border:1px solid #D7D9DD;border-radius:11px;padding:12px 20px;font-size:14px;font-weight:700;cursor:pointer">Guardar borrador</button>
+              <button onClick="{{ enviarRev }}" style="background:#fff;color:#16181C;border:1px solid #D7D9DD;border-radius:11px;padding:12px 20px;font-size:14px;font-weight:700;cursor:pointer">Enviar para revisión</button>
+              <button onClick="{{ finalizar }}" style="background:#C20E1A;color:#fff;border:none;border-radius:11px;padding:12px 20px;font-size:14px;font-weight:700;cursor:pointer" style-active="background:#A40A14">Finalizar y generar PDF</button>
+            </div>
+          </div>
+          </sc-if>
+
+          <!-- DESKTOP PERFIL -->
+          <sc-if value="{{ isDPerfil }}" hint-placeholder-val="{{ false }}">
+          <div style="max-width:560px;background:#fff;border:1px solid #ECEDEF;border-radius:14px;padding:24px;display:flex;align-items:center;gap:18px">
+            <div style="width:72px;height:72px;border-radius:50%;background:#C20E1A;color:#fff;display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:700">CH</div>
+            <div><div style="font-size:20px;font-weight:700">Carlos Hernández</div><div style="font-size:14px;color:#8A929C;margin-top:3px">Supervisor de Servicio Técnico · TAS Honduras</div><div style="font-size:13px;color:#5B6470;margin-top:8px">chernandez@tashn.com · +504 9912-3344</div></div>
+          </div>
+          </sc-if>
+
+        </div>
+
+        <!-- QUICK PANEL -->
+        <sc-if value="{{ panel }}" hint-placeholder-val="{{ false }}">
+        <div style="width:340px;flex:none;border-left:1px solid #ECEDEF;background:#FAFBFC;padding:20px;overflow-y:auto" data-scroll>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+            <span style="font-size:12px;font-weight:700;color:#8A929C;text-transform:uppercase;letter-spacing:.04em">Vista rápida</span>
+            <button onClick="{{ closePanel }}" style="background:transparent;border:none;color:#9AA2AD;cursor:pointer">{{ ic.x }}</button>
+          </div>
+          <div style="font-size:22px;font-weight:800;letter-spacing:-.02em">{{ selRep.id }}</div>
+          <span style="display:inline-flex;align-items:center;gap:6px;background:{{ selRep.sBg }};color:{{ selRep.sFg }};font-size:12px;font-weight:700;padding:5px 11px;border-radius:999px;margin-top:8px"><span style="width:7px;height:7px;border-radius:50%;background:{{ selRep.sDot }}"></span>{{ selRep.status }}</span>
+          <div style="background:#fff;border:1px solid #ECEDEF;border-radius:12px;padding:14px;margin-top:16px;display:flex;flex-direction:column;gap:11px">
+            <div><div style="font-size:11px;color:#8A929C;font-weight:600">Cliente</div><div style="font-size:14px;font-weight:600;margin-top:2px">{{ selRep.cliente }}</div></div>
+            <div><div style="font-size:11px;color:#8A929C;font-weight:600">Ubicación</div><div style="font-size:14px;font-weight:600;margin-top:2px">{{ selRep.ubic }}</div></div>
+            <div style="display:flex;gap:14px"><div style="flex:1"><div style="font-size:11px;color:#8A929C;font-weight:600">Tipo</div><div style="font-size:14px;font-weight:600;margin-top:2px">{{ selRep.tipo }}</div></div><div style="flex:1"><div style="font-size:11px;color:#8A929C;font-weight:600">Fecha</div><div style="font-size:14px;font-weight:600;margin-top:2px">{{ selRep.fecha }}</div></div></div>
+            <div><div style="font-size:11px;color:#8A929C;font-weight:600">Supervisor</div><div style="font-size:14px;font-weight:600;margin-top:2px">{{ selRep.tecnico }}</div></div>
+            <div><div style="font-size:11px;color:#8A929C;font-weight:600">Equipo</div><div style="font-size:14px;font-weight:600;margin-top:2px">{{ selRep.equipo }}</div></div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:9px;margin-top:16px">
+            <button onClick="{{ onReqSign }}" style="background:#C20E1A;color:#fff;border:none;border-radius:11px;padding:13px;font-size:14px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:7px" style-active="background:#A40A14">{{ ic.pen }} Solicitar firma</button>
+            <div style="display:flex;gap:9px">
+              <button onClick="{{ onDownload }}" style="flex:1;background:#fff;color:#16181C;border:1px solid #D7D9DD;border-radius:11px;padding:12px;font-size:13px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px">{{ ic.download }} PDF</button>
+              <button onClick="{{ onShare }}" style="flex:1;background:#fff;color:#16181C;border:1px solid #D7D9DD;border-radius:11px;padding:12px;font-size:13px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px">{{ ic.share }} Compartir</button>
+            </div>
+          </div>
+        </div>
+        </sc-if>
+
+      </div>
+    </div>
+
+    <!-- desktop signature modal -->
+    <sc-if value="{{ sigModal }}" hint-placeholder-val="{{ false }}">
+      <div onClick="{{ closeSig }}" style="position:absolute;inset:0;background:rgba(20,22,28,.45);display:flex;align-items:center;justify-content:center;z-index:60">
+        <div style="background:#fff;width:420px;border-radius:18px;padding:26px;box-shadow:0 24px 60px -20px rgba(0,0,0,.4)">
+          <div style="width:54px;height:54px;border-radius:14px;background:#FDEDED;color:#C20E1A;display:flex;align-items:center;justify-content:center;margin-bottom:14px">{{ ic.pen }}</div>
+          <div style="font-size:18px;font-weight:700;margin-bottom:7px">Firma electrónica</div>
+          <div style="font-size:14px;color:#5B6470;line-height:1.5;margin-bottom:20px">{{ sigMsg }} El cliente recibirá una solicitud para firmar el reporte desde su dispositivo.</div>
+          <button onClick="{{ closeSig }}" style="width:100%;background:#C20E1A;color:#fff;border:none;border-radius:12px;padding:14px;font-size:15px;font-weight:700;cursor:pointer" style-active="background:#A40A14">Entendido</button>
+        </div>
+      </div>
+    </sc-if>
+
+  </div>
+  </sc-if>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:900,&quot;height&quot;:920}}">
+class Component extends DCLogic {
+  state = {
+    device:'mobile', screen:'home', step:1,
+    statusFilter:'Todos', search:'', recording:false, nextVisit:true,
+    confirm:false, sigModal:false, sigMsg:'', toast:'',
+    detailId:'RS-2026-00124', desktopNav:'reportes', desktopSel:'RS-2026-00124', panel:false,
+    open:{cliente:true,trabajo:true,equipos:false,materiales:false,personal:false,fotos:false},
+    equipos:[{nombre:'Impresora de etiquetas',marca:'Zebra',modelo:'ZT411',serie:'ZT411-8842-HN',ubic:'Bodega central',ei:'Operativo con fallas',ef:'Operativo',trabajo:'Limpieza de cabezal y recalibración de sensores de medios.',rec:'Reemplazar rodillo de impresión en la próxima visita.'}],
+    materiales:[{prod:'Rodillo de impresión',cant:'1',unidad:'Unidad',serie:'RD-ZT411',tipo:'Instalado'},{prod:'Alcohol isopropílico',cant:'250',unidad:'ml',serie:'—',tipo:'Utilizado'}],
+    personal:[{nombre:'Carlos Hernández',rol:'Técnico',entrada:'09:00',salida:'12:30',horas:'3.5'}],
+    fotos:[{cat:'Antes',desc:'Estado inicial del cabezal'},{cat:'Durante',desc:'Calibración de sensores'},{cat:'Después',desc:'Prueba de impresión final'}],
+  };
+
+  reports=[
+    {id:'RS-2026-00124',cliente:'Empresa ABC Honduras',ubic:'Tegucigalpa',tipo:'Mantenimiento',fecha:'22 Jun 2026',tecnico:'Carlos Hernández',status:'Pendiente de firma',ot:'OT-4587',equipo:'Impresora Zebra ZT411'},
+    {id:'RS-2026-00123',cliente:'Banco Atlántida',ubic:'San Pedro Sula',tipo:'Soporte',fecha:'21 Jun 2026',tecnico:'Carlos Hernández',status:'Firmado',ot:'OT-4571',equipo:'UPS APC Smart 3000'},
+    {id:'RS-2026-00122',cliente:'Hospital del Valle',ubic:'San Pedro Sula',tipo:'Reparación',fecha:'20 Jun 2026',tecnico:'José Medina',status:'En revisión',ot:'OT-4566',equipo:'Sistema de acceso biométrico'},
+    {id:'RS-2026-00121',cliente:'Supermercados La Colonia',ubic:'Tegucigalpa',tipo:'Instalación',fecha:'19 Jun 2026',tecnico:'Carlos Hernández',status:'Borrador',ot:'—',equipo:'Cámaras Hikvision (x6)'},
+    {id:'RS-2026-00120',cliente:'Cervecería Hondureña',ubic:'San Pedro Sula',tipo:'Inspección',fecha:'18 Jun 2026',tecnico:'Luis Fonseca',status:'Finalizado sin firma',ot:'OT-4559',equipo:'Lectores de código de barras'},
+    {id:'RS-2026-00119',cliente:'Aeropuerto Toncontín',ubic:'Tegucigalpa',tipo:'Mantenimiento',fecha:'17 Jun 2026',tecnico:'Carlos Hernández',status:'Rechazado',ot:'OT-4540',equipo:'Torniquetes de control'},
+    {id:'RS-2026-00118',cliente:'Farmacias Kielsa',ubic:'Tegucigalpa',tipo:'Capacitación',fecha:'16 Jun 2026',tecnico:'Ana Cruz',status:'Firmado',ot:'OT-4533',equipo:'POS y software de inventario'},
+    {id:'RS-2026-00117',cliente:"Grupo Karim's",ubic:'San Pedro Sula',tipo:'Estudio técnico',fecha:'14 Jun 2026',tecnico:'Carlos Hernández',status:'Firmado',ot:'OT-4520',equipo:'Red de CCTV perimetral'},
+  ];
+
+  statusMeta(s){
+    const m={
+      'Borrador':{bg:'#F1F2F4',fg:'#5B6470',dot:'#9AA2AD'},
+      'En revisión':{bg:'#FFF4E5',fg:'#A66400',dot:'#F59E0B'},
+      'Finalizado sin firma':{bg:'#EEF2F7',fg:'#475569',dot:'#64748B'},
+      'Pendiente de firma':{bg:'#FDEDE3',fg:'#BE4708',dot:'#EA580C'},
+      'Firmado':{bg:'#E7F6EC',fg:'#117A3B',dot:'#16A34A'},
+      'Rechazado':{bg:'#FCEBEC',fg:'#B4232C',dot:'#DC2626'},
+    };
+    return m[s]||m['Borrador'];
+  }
+
+  go=(screen)=>{ this.setState({screen}); this._scrollTop(); };
+  openDetail=(id)=>{ this.setState({detailId:id, screen:'detail'}); this._scrollTop(); };
+  _scrollTop=()=>{ setTimeout(()=>{ const el=document.querySelector('[data-scroll]'); if(el) el.scrollTop=0; },10); };
+  next=()=>{ this.setState(s=>({step:Math.min(7,s.step+1)})); this.toast('Borrador guardado'); this._scrollTop(); };
+  prev=()=>{ this.setState(s=>({step:Math.max(1,s.step-1)})); this._scrollTop(); };
+  gotoStep=(n)=>{ this.setState({step:n}); this._scrollTop(); };
+  toast=(m)=>{ this.setState({toast:m}); clearTimeout(this._t); this._t=setTimeout(()=>this.setState({toast:''}),2200); };
+  toggleRec=()=>{ this.setState(s=>({recording:!s.recording})); };
+  toggleNext=(v)=>{ this.setState({nextVisit:v}); };
+  toggleConfirm=()=>{ this.setState(s=>({confirm:!s.confirm})); };
+  toggleSection=(k)=>{ this.setState(s=>({open:{...s.open,[k]:!s.open[k]}})); };
+  setFilter=(v)=>{ this.setState({statusFilter:v}); };
+  onSearch=(e)=>{ this.setState({search:e.target.value}); };
+  setDevice=(d)=>{ this.setState({device:d}); };
+  setDesktopNav=(n)=>{ this.setState({desktopNav:n}); };
+  selectRow=(id)=>{ this.setState({desktopSel:id, panel:true}); };
+  closePanel=()=>{ this.setState({panel:false}); };
+  openSig=(t)=>{ this.setState({sigModal:true, sigMsg:t}); };
+  closeSig=()=>{ this.setState({sigModal:false}); };
+
+  addEquipo=()=>{ this.setState(s=>({equipos:[...s.equipos,{nombre:'',marca:'',modelo:'',serie:'',ubic:'',ei:'',ef:'',trabajo:'',rec:''}]})); this.toast('Equipo agregado'); };
+  removeEquipo=(i)=>{ this.setState(s=>({equipos:s.equipos.filter((_,x)=>x!==i)})); };
+  addMaterial=()=>{ this.setState(s=>({materiales:[...s.materiales,{prod:'',cant:'1',unidad:'Unidad',serie:'',tipo:'Instalado'}]})); this.toast('Material agregado'); };
+  removeMaterial=(i)=>{ this.setState(s=>({materiales:s.materiales.filter((_,x)=>x!==i)})); };
+  addPersonal=()=>{ this.setState(s=>({personal:[...s.personal,{nombre:'',rol:'Técnico',entrada:'',salida:'',horas:''}]})); this.toast('Participante agregado'); };
+  removePersonal=(i)=>{ this.setState(s=>({personal:s.personal.filter((_,x)=>x!==i)})); };
+  addFoto=(cat)=>{ this.setState(s=>({fotos:[...s.fotos,{cat:cat||'Durante',desc:''}]})); this.toast('Evidencia agregada'); };
+  removeFoto=(i)=>{ this.setState(s=>({fotos:s.fotos.filter((_,x)=>x!==i)})); };
+
+  renderVals(){
+    const E=React.createElement;
+    const svg=(ch,s,w)=>E('svg',{width:s||22,height:s||22,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:w||1.85,strokeLinecap:'round',strokeLinejoin:'round'},ch);
+    const P=d=>E('path',{d}), C=(x,y,r)=>E('circle',{cx:x,cy:y,r}), L=(a,b,c,d)=>E('line',{x1:a,y1:b,x2:c,y2:d}), RC=(x,y,w,h,rx)=>E('rect',{x,y,width:w,height:h,rx});
+    const ic={
+      home:svg([P('M3 11.5 12 4l9 7.5'),P('M5 10v10h14V10')]),
+      plus:svg([L(12,5,12,19),L(5,12,19,12)],26,2.2),
+      clock:svg([C(12,12,9),P('M12 7.5V12l3 2')]),
+      user:svg([C(12,8,4),P('M4.5 20a7.5 7.5 0 0 1 15 0')]),
+      search:svg([C(11,11,7),L(20,20,16.5,16.5)],18),
+      mic:svg([RC(9,3,6,11,3),P('M5.5 11.5a6.5 6.5 0 0 0 13 0'),L(12,18,12,21),L(8.5,21,15.5,21)],22),
+      camera:svg([P('M4 8h3l1.5-2.2h7L17 8h3v11H4z'),C(12,13,3.4)],20),
+      chevR:svg([P('M9 5l7 7-7 7')],18),
+      chevL:svg([P('M15 5l-7 7 7 7')],20),
+      chevD:svg([P('M6 9l6 6 6-6')],18),
+      chevU:svg([P('M6 15l6-6 6 6')],18),
+      check:svg([P('M5 12.5 10 17.5 19.5 7')],18,2.4),
+      x:svg([L(6,6,18,18),L(18,6,6,18)],18),
+      download:svg([P('M12 4v11'),P('M7.5 11 12 15.5 16.5 11'),P('M5 19h14')],18),
+      share:svg([C(6,12,2.6),C(17,6,2.6),C(17,18,2.6),L(8.3,10.8,14.7,7.2),L(8.3,13.2,14.7,16.8)],18),
+      cal:svg([RC(4,5,16,16,3),L(4,9,20,9),L(9,3,9,6),L(15,3,15,6)],18),
+      edit:svg([P('M16 4l4 4L8 20H4v-4z')],17),
+      trash:svg([P('M5 7h14'),P('M9 7V5h6v2'),P('M7 7l1 13h8l1-13')],17),
+      alert:svg([P('M12 4 2.5 20h19z'),L(12,10,12,14),L(12,17,12,17.1)],17),
+      bell:svg([P('M6 9a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6'),P('M10 20a2 2 0 0 0 4 0')],18),
+      filter:svg([P('M4 6h16'),P('M7 12h10'),P('M10 18h4')],17),
+      mapPin:svg([P('M12 21s7-6.3 7-11a7 7 0 1 0-14 0c0 4.7 7 11 7 11z'),C(12,10,2.4)],16),
+      phone:svg([P('M5 4h3l1.5 4-2 1.5a11 11 0 0 0 5 5l1.5-2 4 1.5V19a2 2 0 0 1-2 2A16 16 0 0 1 4 6a2 2 0 0 1 1-2z')],16),
+      mail:svg([RC(3,5,18,14,2.5),P('M3.5 6.5 12 13l8.5-6.5')],16),
+      doc:svg([P('M7 3h7l4 4v14H7z'),P('M14 3v4h4'),L(10,12,16,12),L(10,15,16,15),L(10,18,14,18)],18),
+      pen:svg([P('M4 20s2-.5 3-1.5L19 6.5a2.1 2.1 0 0 0-3-3L4 15.5C3 16.5 4 20 4 20z'),L(15,5.5,18.5,9)],17),
+      sort:svg([P('M7 5v14'),P('M4 8l3-3 3 3'),P('M17 19V5'),P('M14 16l3 3 3-3')],17),
+      cols:svg([RC(4,5,16,14,2),L(9.5,5,9.5,19),L(15,5,15,19)],17),
+      send:svg([P('M4 12 20 5l-6 15-3-6z'),L(11,14,20,5)],17),
+      eye:svg([P('M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z'),C(12,12,3)],16),
+      wave:svg([L(4,12,4,12.1),L(8,8,8,16),L(12,5,12,19),L(16,8,16,16),L(20,11,20,13)],20,2),
+      copy:svg([RC(8,8,12,12,2.5),P('M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2')],16),
+      back:svg([P('M19 12H5'),P('M11 6l-6 6 6 6')],22),
+      menu:svg([L(4,7,20,7),L(4,12,20,12),L(4,17,20,17)],20),
+      board:svg([RC(3,4,18,16,2.5),L(3,9,21,9),L(9,9,9,20)],18),
+      chart:svg([P('M4 20V4'),P('M4 20h16'),RC(7,12,3,6,1),RC(12,8,3,10,1),RC(17,14,3,4,1)],18),
+    };
+
+    // routing
+    const st=this.state;
+    const isMobile=st.device==='mobile', isDesktop=st.device==='desktop';
+    const screen=st.screen;
+    const withMeta=arr=>arr.map(r=>{const m=this.statusMeta(r.status);return {...r,sBg:m.bg,sFg:m.fg,sDot:m.dot,onOpen:()=>this.openDetail(r.id)};});
+
+    // filtered list
+    let list=this.reports.slice();
+    if(st.statusFilter!=='Todos') list=list.filter(r=>r.status===st.statusFilter);
+    const q=st.search.trim().toLowerCase();
+    if(q) list=list.filter(r=>(r.id+' '+r.cliente+' '+r.ubic).toLowerCase().includes(q));
+
+    const chipDefs=['Todos','Borrador','En revisión','Pendiente de firma','Firmado','Rechazado'];
+    const chips=chipDefs.map(v=>{
+      const active=st.statusFilter===v;
+      return {label:v, onClick:()=>this.setFilter(v),
+        style:`flex:none;padding:8px 14px;border-radius:999px;font-size:13px;font-weight:600;cursor:pointer;border:1px solid ${active?'#C20E1A':'#E1E3E7'};background:${active?'#C20E1A':'#fff'};color:${active?'#fff':'#5B6470'}`};
+    });
+
+    const summary=[
+      {label:'Borradores',n:3,color:'#5B6470',onClick:()=>{this.setFilter('Borrador');this.go('home');}},
+      {label:'Pendientes de revisión',n:2,color:'#A66400',onClick:()=>{this.setFilter('En revisión');this.go('home');}},
+      {label:'Pendientes de firma',n:4,color:'#BE4708',onClick:()=>{this.setFilter('Pendiente de firma');this.go('home');}},
+      {label:'Completados',n:12,color:'#117A3B',onClick:()=>{this.setFilter('Firmado');this.go('home');}},
+    ];
+
+    const detail=(()=>{const r=this.reports.find(x=>x.id===st.detailId)||this.reports[0];const m=this.statusMeta(r.status);return {...r,sBg:m.bg,sFg:m.fg,sDot:m.dot};})();
+
+    const tipos=['Instalación','Soporte','Mantenimiento','Reparación','Capacitación','Estudio técnico','Inspección','Otro'];
+    const tipoChips=tipos.map(t=>{const active=t==='Mantenimiento';return {label:t,style:`flex:none;padding:9px 14px;border-radius:10px;font-size:13.5px;font-weight:600;cursor:pointer;border:1px solid ${active?'#C20E1A':'#E1E3E7'};background:${active?'#FDEDED':'#fff'};color:${active?'#C20E1A':'#5B6470'}`};});
+
+    const equipos=st.equipos.map((e,i)=>({...e,idx:i,onRemove:()=>this.removeEquipo(i)}));
+    const materiales=st.materiales.map((e,i)=>({...e,idx:i,onRemove:()=>this.removeMaterial(i)}));
+    const personal=st.personal.map((e,i)=>({...e,idx:i,onRemove:()=>this.removePersonal(i)}));
+    const fotos=st.fotos.map((e,i)=>{
+      const fc={'Antes':'#5B6470','Durante':'#A66400','Después':'#117A3B'}[e.cat]||'#5B6470';
+      return {...e,idx:i,catColor:fc,onRemove:()=>this.removeFoto(i)};
+    });
+
+    // step meta
+    const stepTitles=['Cliente y visita','Trabajo realizado','Equipos intervenidos','Materiales y repuestos','Personal participante','Evidencias','Revisión'];
+    const stepTitle=stepTitles[st.step-1];
+    const pct=Math.round(st.step/7*100);
+    const segs=Array.from({length:7},(_,i)=>({key:i,bg:i<st.step?'#C20E1A':'#E5E7EB'}));
+
+    // pendientes groups
+    const gFirma=withMeta(this.reports.filter(r=>r.status==='Pendiente de firma'||r.status==='Finalizado sin firma'));
+    const gRevision=withMeta(this.reports.filter(r=>r.status==='En revisión'||r.status==='Rechazado'));
+    const gBorrador=withMeta(this.reports.filter(r=>r.status==='Borrador'));
+
+    // section toggles for detail
+    const secMeta=(k)=>({open:st.open[k],onToggle:()=>this.toggleSection(k),
+      caret:st.open[k]?ic.chevU:ic.chevD});
+
+    // desktop
+    const deskList=this.reports.map(r=>{const m=this.statusMeta(r.status);const sel=st.desktopSel===r.id;return {...r,sBg:m.bg,sFg:m.fg,sDot:m.dot,onSelect:()=>this.selectRow(r.id),
+      rowStyle:`cursor:pointer;border-bottom:1px solid #F1F2F4;background:${sel?'#FDF2F2':'#fff'}`};});
+    const selRep=(()=>{const r=this.reports.find(x=>x.id===st.desktopSel)||this.reports[0];const m=this.statusMeta(r.status);return {...r,sBg:m.bg,sFg:m.fg,sDot:m.dot};})();
+    const dnav=[
+      {key:'reportes',label:'Reportes',icon:ic.home},
+      {key:'pendientes',label:'Pendientes',icon:ic.clock},
+      {key:'metricas',label:'Métricas',icon:ic.chart},
+      {key:'nuevo',label:'Nuevo RS',icon:ic.plus},
+      {key:'perfil',label:'Perfil',icon:ic.user},
+    ].map(n=>{const active=st.desktopNav===n.key;return {...n,onClick:()=>this.setDesktopNav(n.key),
+      style:`display:flex;align-items:center;gap:11px;padding:11px 13px;border-radius:10px;cursor:pointer;border:none;width:100%;text-align:left;font-size:14px;font-weight:600;background:${active?'#FDEDED':'transparent'};color:${active?'#C20E1A':'#5B6470'}`};});
+    const metrics=[
+      {label:'Total de reportes',n:'214',sub:'+12 esta semana',color:'#16181C'},
+      {label:'Pendientes de firma',n:'4',sub:'Requiere acción',color:'#BE4708'},
+      {label:'En revisión',n:'2',sub:'Esperando aprobación',color:'#A66400'},
+      {label:'Tiempo promedio',n:'1.8 d',sub:'Creación → firma',color:'#117A3B'},
+    ];
+
+    return {
+      ic,
+      isMobile, isDesktop,
+      onMobile:()=>this.setDevice('mobile'), onDesktop:()=>this.setDevice('desktop'),
+      devMobileStyle:`padding:7px 16px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;border:none;background:${isMobile?'#fff':'transparent'};color:${isMobile?'#16181C':'#8A929C'};box-shadow:${isMobile?'0 1px 2px rgba(0,0,0,.12)':'none'}`,
+      devDeskStyle:`padding:7px 16px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;border:none;background:${isDesktop?'#fff':'transparent'};color:${isDesktop?'#16181C':'#8A929C'};box-shadow:${isDesktop?'0 1px 2px rgba(0,0,0,.12)':'none'}`,
+
+      isHome:screen==='home', isForm:screen==='form', isPend:screen==='pendientes', isPerfil:screen==='perfil', isDetail:screen==='detail',
+      step1:st.step===1,step2:st.step===2,step3:st.step===3,step4:st.step===4,step5:st.step===5,step6:st.step===6,step7:st.step===7,
+
+      goHome:()=>this.go('home'), goForm:()=>{this.setState({step:1});this.go('form');}, goPend:()=>this.go('pendientes'), goPerfil:()=>this.go('perfil'), back:()=>this.go('home'),
+      cHome:screen==='home'?'#C20E1A':'#9AA2AD',
+      cPend:screen==='pendientes'?'#C20E1A':'#9AA2AD',
+      cPerfil:screen==='perfil'?'#C20E1A':'#9AA2AD',
+
+      reportsList:withMeta(list), listEmpty:list.length===0, resultCount:list.length,
+      chips, summary, detail, tipoChips,
+      equipos, materiales, personal, fotos,
+      search:st.search, onSearch:this.onSearch,
+      next:this.next, prev:this.prev, gotoStep:this.gotoStep, stepTitle, pct, pctStr:pct+'%', segs, step:st.step,
+      recording:st.recording, toggleRec:this.toggleRec,
+      recBtnStyle:`width:46px;height:46px;border-radius:50%;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex:none;background:${st.recording?'#C20E1A':'#FDEDED'};color:${st.recording?'#fff':'#C20E1A'};${st.recording?'animation:tasPulse 1.3s infinite':''}`,
+      nextVisit:st.nextVisit, onYes:()=>this.toggleNext(true), onNo:()=>this.toggleNext(false),
+      yesStyle:`flex:1;padding:13px;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer;border:1px solid ${st.nextVisit?'#C20E1A':'#E1E3E7'};background:${st.nextVisit?'#FDEDED':'#fff'};color:${st.nextVisit?'#C20E1A':'#5B6470'}`,
+      noStyle:`flex:1;padding:13px;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer;border:1px solid ${!st.nextVisit?'#C20E1A':'#E1E3E7'};background:${!st.nextVisit?'#FDEDED':'#fff'};color:${!st.nextVisit?'#C20E1A':'#5B6470'}`,
+      addEquipo:this.addEquipo, addMaterial:this.addMaterial, addPersonal:this.addPersonal, addFoto:()=>this.addFoto('Durante'),
+      confirm:st.confirm, toggleConfirm:this.toggleConfirm,
+      checkStyle:`width:24px;height:24px;border-radius:7px;border:2px solid ${st.confirm?'#C20E1A':'#C7CBD1'};background:${st.confirm?'#C20E1A':'#fff'};flex:none;display:flex;align-items:center;justify-content:center;color:#fff`,
+      finalizar:()=>this.toast('PDF generado · RS-2026-00124'), enviarRev:()=>this.toast('Enviado para revisión'), guardarBorr:()=>this.toast('Borrador guardado'),
+
+      // detail
+      secCliente:secMeta('cliente'), secTrabajo:secMeta('trabajo'), secEquipos:secMeta('equipos'), secMateriales:secMeta('materiales'), secPersonal:secMeta('personal'), secFotos:secMeta('fotos'),
+      openCliente:st.open.cliente,openTrabajo:st.open.trabajo,openEquipos:st.open.equipos,openMateriales:st.open.materiales,openPersonal:st.open.personal,openFotos:st.open.fotos,
+      onDownload:()=>this.toast('Descargando PDF…'), onShare:()=>this.toast('Enlace copiado'), onSendClient:()=>this.toast('Enviado a María López'),
+      onReqSign:()=>this.openSig('La firma electrónica estará disponible próximamente.'), onCorrection:()=>this.toast('Corrección creada · RS-2026-00124-R1'),
+      sigModal:st.sigModal, sigMsg:st.sigMsg, closeSig:this.closeSig,
+
+      toast:st.toast, hasToast:!!st.toast,
+
+      // desktop
+      deskList, selRep, dnav, metrics, panel:st.panel, closePanel:this.closePanel,
+      desktopNav:st.desktopNav, isDForm:st.desktopNav==='nuevo', isDPerfil:st.desktopNav==='perfil', isDTable:st.desktopNav==='reportes'||st.desktopNav==='pendientes'||st.desktopNav==='metricas',
+      dTitle:({reportes:'Reportes de servicio',pendientes:'Pendientes',metricas:'Métricas',nuevo:'Nuevo reporte de servicio',perfil:'Perfil'})[st.desktopNav]||'',
+      dDownload:()=>this.toast('Exportando tabla a Excel…'), dNew:()=>this.toast('Abriendo formulario de nuevo RS…'),
+    };
+  }
+}
+</script>
+</body>
+</html>

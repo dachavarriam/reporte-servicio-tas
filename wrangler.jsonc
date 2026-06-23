@@ -1,0 +1,13 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "rs-tas",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-06-22",
+  "assets": { "directory": "./dist", "binding": "ASSETS", "not_found_handling": "single-page-application", "run_worker_first": ["/api/*"] },
+  "routes": [{ "pattern": "rs.tashonduras.com", "custom_domain": true }],
+  "d1_databases": [{ "binding": "DB", "database_name": "rs-tas", "database_id": "f0a74c85-7209-4f16-afca-b9ca17f7800c", "migrations_dir": "migrations" }],
+  "r2_buckets": [{ "binding": "FILES", "bucket_name": "tashub" }],
+  "browser": { "binding": "BROWSER" },
+  "vars": { "APP_ORIGIN": "https://rs.tashonduras.com", "N8N_WEBHOOK_URL": "https://n8n.wembla.com/webhook/rs-pdf", "R2_PREFIX": "reportes" },
+  "observability": { "enabled": true }
+}

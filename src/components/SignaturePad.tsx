@@ -1,0 +1,13 @@
+import { useEffect, useRef, useState, type PointerEvent } from 'react';
+import { Button, Field, Input } from './ui';
+import type { Firma } from '../domain/types';
+
+export function SignaturePad({ onSave, onCancel }: { onSave: (firma: Firma) => void; onCancel: () => void }) {
+  const canvas = useRef<HTMLCanvasElement>(null); const drawing = useRef(false); const [nombre, setNombre] = useState(''); const [cargo, setCargo] = useState(''); const [accepted, setAccepted] = useState(false);
+  useEffect(() => { const c = canvas.current!; const rect = c.getBoundingClientRect(); c.width = rect.width * devicePixelRatio; c.height = 180 * devicePixelRatio; const ctx = c.getContext('2d')!; ctx.scale(devicePixelRatio, devicePixelRatio); ctx.lineWidth = 2.2; ctx.lineCap = 'round'; ctx.strokeStyle = '#16181C'; }, []);
+  const point = (e: PointerEvent<HTMLCanvasElement>) => { const r = e.currentTarget.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top] as const; };
+  const start = (e: PointerEvent<HTMLCanvasElement>) => { drawing.current = true; e.currentTarget.setPointerCapture(e.pointerId); const [x, y] = point(e); const ctx = e.currentTarget.getContext('2d')!; ctx.beginPath(); ctx.moveTo(x, y); };
+  const move = (e: PointerEvent<HTMLCanvasElement>) => { if (!drawing.current) return; const [x, y] = point(e); const ctx = e.currentTarget.getContext('2d')!; ctx.lineTo(x, y); ctx.stroke(); };
+  const clear = () => { const c = canvas.current!; c.getContext('2d')!.clearRect(0, 0, c.width, c.height); };
+  return <div className="modal-layer"><div className="modal"><h2>Firma del cliente</h2><p>Solicite al cliente revisar el reporte y firmar en el recuadro.</p><Field label="Nombre completo" required><Input value={nombre} onChange={e => setNombre(e.target.value)} /></Field><Field label="Cargo"><Input value={cargo} onChange={e => setCargo(e.target.value)} /></Field><canvas ref={canvas} className="signature" onPointerDown={start} onPointerMove={move} onPointerUp={() => drawing.current = false} onPointerCancel={() => drawing.current = false} /><button className="clear-sign" onClick={clear}>Limpiar firma</button><label className="check"><input type="checkbox" checked={accepted} onChange={e => setAccepted(e.target.checked)} /> Confirmo que revisé la información y acepto este reporte de servicio.</label><div className="modal-actions"><Button variant="outline" onClick={onCancel}>Cancelar</Button><Button disabled={!nombre || !accepted} onClick={() => onSave({ nombre, cargo, aceptada: accepted, trazo: canvas.current!.toDataURL('image/png'), firmadaEn: new Date().toISOString() })}>Guardar firma</Button></div></div></div>;
+}
