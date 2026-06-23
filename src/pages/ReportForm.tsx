@@ -10,8 +10,8 @@ import { useApp } from '../store/app';
 
 const titles = ['Cliente y visita', 'Trabajo realizado', 'Equipos intervenidos', 'Materiales y repuestos', 'Personal participante', 'Evidencias', 'Revisión y firma'];
 export function ReportForm() {
-  const { id } = useParams(); const nav = useNavigate(); const notify = useApp(s => s.notify); const reload = useApp(s => s.load); const [step, setStep] = useState(Number(localStorage.getItem('rs-draft-step') ?? 1)); const [rs, setRs] = useState<ReporteServicio | null>(null); const [saving, setSaving] = useState(false); const [sign, setSign] = useState(false); const timer = useRef<number>(0);
-  useEffect(() => { void (async () => setRs(id ? await reports.get(id) : await reports.createDraft()))(); }, [id]);
+  const { id } = useParams(); const nav = useNavigate(); const notify = useApp(s => s.notify); const reload = useApp(s => s.load); const user = useApp(s => s.user); const [step, setStep] = useState(Number(localStorage.getItem('rs-draft-step') ?? 1)); const [rs, setRs] = useState<ReporteServicio | null>(null); const [saving, setSaving] = useState(false); const [sign, setSign] = useState(false); const timer = useRef<number>(0);
+  useEffect(() => { void (async () => setRs(id ? await reports.get(id) : await reports.createDraft({ supervisor: user?.nombre, creadoPor: user?.nombre })))(); }, [id, user?.nombre]);
   useEffect(() => { if (!rs) return; window.clearTimeout(timer.current); setSaving(true); timer.current = window.setTimeout(() => { void reports.saveDraft(rs).then(() => setSaving(false)); }, 800); return () => window.clearTimeout(timer.current); }, [rs]);
   useEffect(() => { localStorage.setItem('rs-draft-step', String(step)); window.scrollTo({ top: 0, behavior: 'smooth' }); }, [step]);
   const patch = useCallback((p: Partial<ReporteServicio>) => setRs(x => x ? { ...x, ...p } : x), []);
@@ -19,7 +19,7 @@ export function ReportForm() {
   const addEquipo = () => patch({ equipos: [...rs!.equipos, { id: uid(), nombre: '', marca: '', modelo: '', serie: '', ubicacion: '', estadoInicial: '', estadoFinal: '', trabajoRealizado: '', recomendacion: '' }] });
   const addMaterial = () => patch({ materiales: [...rs!.materiales, { id: uid(), producto: '', cantidad: '1', unidad: 'Unidad', uso: 'Utilizado' }] });
   const addPersonal = () => patch({ personal: [...rs!.personal, { id: uid(), nombre: '', rol: 'Técnico', horaEntrada: '', horaSalida: '', horas: '' }] });
-  const upload = async (e: ChangeEvent<HTMLInputElement>, categoria: CategoriaFoto = 'Durante') => { for (const file of Array.from(e.target.files ?? [])) await reports.putEvidencia(rs!.id, file, { categoria, descripcion: file.name }); setRs(await reports.get(rs!.id)); notify('Evidencia guardada'); };
+  const upload = async (e: ChangeEvent<HTMLInputElement>, categoria: CategoriaFoto = 'Durante') => { try { for (const file of Array.from(e.target.files ?? [])) await reports.putEvidencia(rs!.id, file, { categoria, descripcion: file.name }); setRs(await reports.get(rs!.id)); notify('Evidencia guardada en R2'); } catch { notify('No se pudo guardar la evidencia'); } };
   const finalize = async () => { if (!rs?.firma) return setSign(true); const to = rs.estado === 'Borrador' ? 'Pendiente de firma' : rs.estado; if (to !== rs.estado) await reports.transition(rs.id, to); notify('Reporte firmado y listo para generar PDF'); await reload(); nav(`/rs/${rs.id}`); };
   if (!rs) return <div className="loading">Preparando borrador…</div>;
   return <div className="form-page"><header className="form-header"><button onClick={() => nav('/')}><ChevronLeft /> Salir</button><span className="autosave"><Check />{saving ? 'Guardando…' : 'Guardado automático'}</span><div><h1>{titles[step - 1]}</h1><span>Paso {step} de 7</span></div><div className="progress">{titles.map((_, i) => <i key={i} className={i < step ? 'done' : ''} />)}</div></header><div className="form-content">

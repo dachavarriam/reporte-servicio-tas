@@ -7,10 +7,10 @@ import { useApp } from '../store/app';
 
 const filters: (EstadoRS | 'Todos')[] = ['Todos', 'Borrador', 'En revisión', 'Finalizado sin firma', 'Pendiente de firma', 'Firmado', 'Rechazado'];
 export function Home() {
-  const { items, metrics, loading, load } = useApp(); const [filter, setFilter] = useState<EstadoRS | 'Todos'>('Todos'); const [query, setQuery] = useState(''); const nav = useNavigate();
+  const { items, metrics, loading, load, user } = useApp(); const [filter, setFilter] = useState<EstadoRS | 'Todos'>('Todos'); const [query, setQuery] = useState(''); const nav = useNavigate();
   useEffect(() => { void load(); }, [load]);
   const shown = useMemo(() => items.filter(x => (filter === 'Todos' || x.estado === filter) && `${x.id} ${x.cliente} ${x.ubicacion}`.toLowerCase().includes(query.toLowerCase())), [items, filter, query]);
-  return <div className="page"><section className="welcome"><p>Buenos días,</p><h1>Carlos Hernández</h1></section><Button className="mobile-create" onClick={() => nav('/nuevo')}><Plus /> Crear nuevo reporte</Button>
+  return <div className="page"><section className="welcome"><p>Buenos días,</p><h1>{user?.nombre}</h1></section><Button className="mobile-create" onClick={() => nav('/nuevo')}><Plus /> Crear nuevo reporte</Button>
     <div className="metrics-grid">{[
       ['Borradores', metrics?.borradores ?? 0, 'Borrador', '#5B6470'], ['En revisión', metrics?.revision ?? 0, 'En revisión', '#A66400'], ['Pendientes de firma', metrics?.pendientesFirma ?? 0, 'Pendiente de firma', '#BE4708'], ['Completados', metrics?.completados ?? 0, 'Firmado', '#117A3B']
     ].map(([label, n, state, color]) => <button className="metric" key={String(label)} onClick={() => setFilter(state as EstadoRS)}><strong style={{ color: String(color) }}>{n}</strong><span>{label}</span></button>)}</div>

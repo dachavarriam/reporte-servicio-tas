@@ -1,4 +1,5 @@
 import { db, seedDatabase } from './db';
+import { authHeaders, jsonHeaders } from './api';
 import type { CategoriaFoto, Cliente, EstadoRS, Metrics, ReporteServicio, TimelineEvento } from '../domain/types';
 import { uid } from '../domain/types';
 
@@ -48,4 +49,41 @@ export class LocalReportRepository implements ReportRepository {
   async metrics() { const all = (await this.list()).items; return { total: all.length, borradores: all.filter(x => x.estado === 'Borrador').length, revision: all.filter(x => x.estado === 'En revisión').length, pendientesFirma: all.filter(x => x.estado === 'Pendiente de firma').length, completados: all.filter(x => x.estado === 'Firmado').length, tiempoPromedioDias: 1.8 }; }
 }
 
-export const reports = new LocalReportRepository();
+export class RemoteReportRepository implements ReportRepository {
+  private local = new LocalReportRepository();
+  private async request<T>(url: string, init?: RequestInit): Promise<T> {
+    const res = await fetch(url, { ...init, headers: init?.body ? jsonHeaders(init?.headers ?? {}) : authHeaders(init?.headers ?? {}) });
+    if (!res.ok) throw new Error(`API ${res.status}`);
+    return res.json() as Promise<T>;
+  }
+  async list(query: { estado?: EstadoRS | 'Todos'; texto?: string } = {}) {
+    const params = new URLSearchParams();
+    if (query.estado) params.set('estado', query.estado);
+    if (query.texto) params.set('texto', query.texto);
+    return this.request<{ items: ReporteServicio[]; total: number }>(`/api/reportes?${params}`);
+  }
+  async get(id: string) { try { return await this.request<ReporteServicio>(`/api/reportes/${encodeURIComponent(id)}`); } catch { return null; } }
+  async timeline(id: string) { return this.local.timeline(id); }
+  async createDraft(partial: Partial<ReporteServicio> = {}) {
+    const rs = await this.request<ReporteServicio>('/api/reportes', { method: 'POST', body: JSON.stringify(partial) });
+    return { ...rs, ...partial, supervisor: partial.supervisor ?? rs.supervisor, creadoPor: partial.creadoPor ?? rs.creadoPor };
+  }
+  async saveDraft(rs: ReporteServicio) { await this.request(`/api/reportes/${encodeURIComponent(rs.id)}`, { method: 'PUT', body: JSON.stringify(rs) }); }
+  async transition(id: string, to: EstadoRS, nota?: string) { const rs = await this.get(id); if (!rs) throw new Error('Reporte no encontrado'); const saved = { ...rs, estado: to, version: rs.version + 1, actualizadoEn: new Date().toISOString() }; await this.saveDraft(saved); await this.local.transition(id, to, nota).catch(() => undefined); return saved; }
+  async putEvidencia(rsId: string, file: Blob, meta: { categoria: CategoriaFoto; descripcion: string }) {
+    const data = new FormData();
+    data.set('file', file);
+    data.set('categoria', meta.categoria);
+    data.set('descripcion', meta.descripcion);
+    const res = await fetch(`/api/reportes/${encodeURIComponent(rsId)}/evidencias`, { method: 'POST', headers: authHeaders(), body: data });
+    if (!res.ok) throw new Error(`API ${res.status}`);
+  }
+  async removeEvidencia(rsId: string, evidenciaId: string) {
+    const res = await fetch(`/api/reportes/${encodeURIComponent(rsId)}/evidencias/${encodeURIComponent(evidenciaId)}`, { method: 'DELETE', headers: authHeaders() });
+    if (!res.ok) throw new Error(`API ${res.status}`);
+  }
+  async searchClientes(texto: string) { return this.local.searchClientes(texto); }
+  async metrics() { const all = (await this.list()).items; return { total: all.length, borradores: all.filter(x => x.estado === 'Borrador').length, revision: all.filter(x => x.estado === 'En revisión').length, pendientesFirma: all.filter(x => x.estado === 'Pendiente de firma').length, completados: all.filter(x => x.estado === 'Firmado').length, tiempoPromedioDias: 0 }; }
+}
+
+export const reports = new RemoteReportRepository();
