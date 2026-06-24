@@ -30,8 +30,9 @@ Actualizado: 2026-06-24
    - Layout oficial TAS.
    - Mejor portada/encabezado.
    - Tabla de evidencias mejor paginada.
-   - Firma del supervisor de campo si se decide usar.
-   - Pie legal y datos fiscales si aplica.
+- Firma del supervisor de campo si se decide usar.
+- Pie legal y datos fiscales si aplica.
+   - Nota 2026-06-24: firma real del supervisor ya fue implementada; queda solo pulir layout si el equipo pide cambios.
 
 3. Historial por cliente:
    - Agregar búsqueda y filtros por fecha/tipo/estado.
@@ -85,3 +86,9 @@ Actualizado: 2026-06-24
    - El envío por correo puede quedarse en n8n.
    - La app ya manda cliente/contacto/correo en el payload.
    - n8n debe reportar `enviado` solo cuando Slack/correo hayan terminado correctamente, o `fallido` con detalle.
+
+12. Onboarding de usuarios:
+   - Definir si el correo de bienvenida sale por n8n/SMTP o Cloudflare Email Sending.
+   - Crear endpoint/botón `Enviar invitación`.
+   - Usar plantilla de `docs/onboarding-usuarios.md`.
+   - Mantener cambio obligatorio de contraseña en primer ingreso.
