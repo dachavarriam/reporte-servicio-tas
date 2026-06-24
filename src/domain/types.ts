@@ -7,7 +7,7 @@ export interface Equipo { id: string; nombre: string; marca: string; modelo: str
 export interface Material { id: string; producto: string; cantidad: string; unidad: string; serieLote?: string; uso: 'Instalado' | 'Utilizado' | 'Entregado' }
 export interface Personal { id: string; nombre: string; rol: 'Técnico' | 'Ingeniero' | 'Supervisor' | 'Ayudante'; horaEntrada: string; horaSalida: string; horas: string }
 export interface Evidencia { id: string; categoria: CategoriaFoto; descripcion: string; blobKey?: string; orden: number }
-export interface Firma { nombre: string; cargo: string; trazo: string; aceptada: boolean; firmadaEn: string }
+export interface Firma { nombre: string; cargo: string; trazo: string; aceptada: boolean; firmadaEn: string; ip?: string; userAgent?: string; ubicacion?: { lat: number; lng: number; accuracy?: number } }
 export interface TimelineEvento { id: string; rsId: string; tipo: string; actor: string; fecha: string; nota?: string }
 
 export interface ReporteServicio {
@@ -17,7 +17,7 @@ export interface ReporteServicio {
   trabajoRealizado: string; observaciones: string; estadoActual: string; recomendaciones: string;
   accionesPendientes: string; proximaVisita: boolean; fechaSeguimiento?: string;
   equipos: Equipo[]; materiales: Material[]; personal: Personal[]; evidencias: Evidencia[];
-  firma?: Firma; supervisor: string; creadoPor: string; creadoEn: string; actualizadoEn: string; resumenEquipo?: string;
+  firma?: Firma; firmaSupervisor?: Firma; supervisor: string; creadoPor: string; creadoEn: string; actualizadoEn: string; resumenEquipo?: string;
 }
 
 export interface Usuario { id: string; usuario: string; nombre: string; correo: string; telefono: string; rol: RolUsuario; activo: boolean; mustChangePassword?: boolean }

@@ -166,6 +166,7 @@ app.post('/api/reportes', async c => {
   rs.creadoPor = user.nombre;
   rs.creadoEn = now;
   rs.actualizadoEn = now;
+  stampSignature(c, rs, now);
   await saveReport(c.env.DB, rs, now);
   await c.env.DB.prepare('insert into timeline (id, reporte_id, tipo, actor, creado_en) values (?, ?, ?, ?, ?)').bind(crypto.randomUUID(), rs.id, 'creado', user.nombre, now).run();
   return c.json(rs, 201);
@@ -186,6 +187,7 @@ app.put('/api/reportes/:id', async c => {
   if (previous && !canAccessReport(user, previous)) return c.json({ error: 'forbidden' }, 403);
   if (!rs.creadoPor) rs.creadoPor = user.nombre;
   if (!rs.supervisor || rs.supervisor === 'Carlos Hernández') rs.supervisor = user.nombre;
+  stampSignature(c, rs, now);
   await saveReport(c.env.DB, rs, now);
   if (previous?.estado && previous.estado !== rs.estado) {
     await c.env.DB.prepare('insert into timeline (id, reporte_id, tipo, actor, nota, creado_en) values (?, ?, ?, ?, ?, ?)')
@@ -409,6 +411,14 @@ async function saveReport(db: D1Database, rs: Record<string, any>, now: string) 
   await db.prepare(`insert into reportes (id, estado, version, fecha, cliente, contacto, correo, telefono, ubicacion, orden_trabajo, solicitado_por, tipo_visita, hora_llegada, hora_salida, trabajo_realizado, observaciones, estado_actual, recomendaciones, acciones_pendientes, proxima_visita, fecha_seguimiento, supervisor, creado_por, creado_en, actualizado_en, resumen_equipo, payload_json) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) on conflict(id) do update set estado=excluded.estado, version=reportes.version+1, fecha=excluded.fecha, cliente=excluded.cliente, contacto=excluded.contacto, correo=excluded.correo, telefono=excluded.telefono, ubicacion=excluded.ubicacion, orden_trabajo=excluded.orden_trabajo, solicitado_por=excluded.solicitado_por, tipo_visita=excluded.tipo_visita, hora_llegada=excluded.hora_llegada, hora_salida=excluded.hora_salida, trabajo_realizado=excluded.trabajo_realizado, observaciones=excluded.observaciones, estado_actual=excluded.estado_actual, recomendaciones=excluded.recomendaciones, acciones_pendientes=excluded.acciones_pendientes, proxima_visita=excluded.proxima_visita, fecha_seguimiento=excluded.fecha_seguimiento, supervisor=excluded.supervisor, actualizado_en=excluded.actualizado_en, resumen_equipo=excluded.resumen_equipo, payload_json=excluded.payload_json`)
     .bind(rs.id, rs.estado, rs.version ?? 1, rs.fecha, rs.cliente ?? '', rs.contacto ?? '', rs.correo ?? '', rs.telefono ?? '', rs.ubicacion ?? '', rs.ordenTrabajo ?? '', rs.solicitadoPor ?? '', rs.tipoVisita ?? '', rs.horaLlegada ?? '', rs.horaSalida ?? '', rs.trabajoRealizado ?? '', rs.observaciones ?? '', rs.estadoActual ?? '', rs.recomendaciones ?? '', rs.accionesPendientes ?? '', rs.proximaVisita ? 1 : 0, rs.fechaSeguimiento ?? '', rs.supervisor ?? '', rs.creadoPor ?? '', rs.creadoEn ?? now, now, rs.resumenEquipo ?? '', JSON.stringify(rs)).run();
 }
+function stampSignature(c: { req: { header(name: string): string | undefined } }, rs: Record<string, any>, now: string) {
+  for (const key of ['firma', 'firmaSupervisor']) {
+    if (!rs[key] || typeof rs[key] !== 'object') continue;
+    rs[key].firmadaEn = rs[key].firmadaEn || now;
+    rs[key].ip = rs[key].ip || c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for') || '';
+    rs[key].userAgent = rs[key].userAgent || c.req.header('user-agent') || '';
+  }
+}
 async function renderPdfHtml(rs: ReturnType<typeof rowToReport>, env: Env) {
   const equipos = Array.isArray(rs.equipos) ? rs.equipos : [];
   const materiales = Array.isArray(rs.materiales) ? rs.materiales : [];
@@ -470,10 +480,12 @@ async function renderPdfHtml(rs: ReturnType<typeof rowToReport>, env: Env) {
     .photo img { display: block; width: 100%; height: 205px; object-fit: cover; background: #f2f2f2; }
     .photo strong { display: inline-block; margin-top: 6px; font-size: 11.5px; color: #555555; }
     .photo span { display: block; color: #666666; font-size: 11px; }
-    .signature-table { width: 100%; border-collapse: collapse; margin-top: 16px; page-break-inside: avoid; }
+    .signature-table { width: 100%; table-layout: fixed; border-collapse: collapse; margin-top: 16px; page-break-inside: avoid; }
     .signature-table td { width: 50%; vertical-align: bottom; padding: 8px 18px; border: none; text-align: center; }
-    .signature { height: 82px; max-width: 260px; object-fit: contain; display: block; margin: 0 auto 5px; }
-    .signature-line { border-top: 1px solid #555555; padding-top: 5px; font-size: 11.5px; }
+    .signature-slot { height: 92px; display: flex; align-items: flex-end; justify-content: center; }
+    .signature { height: 82px; max-width: 240px; object-fit: contain; display: block; }
+    .signature-line { min-height: 58px; border-top: 1px solid #555555; padding-top: 5px; font-size: 11.5px; }
+    .signature-meta { display: block; color: #666666; font-size: 9.5px; line-height: 1.15; margin-top: 2px; }
     .manual-footer { position: fixed; left: 0; right: 0; bottom: 0; height: 0.34in; border-top: 1px solid #dddddd; padding-top: 5px; color: #666666; font-size: 9.2px; line-height: 1.18; text-align: center; background: #ffffff; }
   </style>
 </head>
@@ -548,8 +560,8 @@ async function renderPdfHtml(rs: ReturnType<typeof rowToReport>, env: Env) {
 
   <table class="signature-table">
     <tr>
-      <td><div class="signature-line"><strong>${esc(rs.supervisor || 'Supervisor de campo')}</strong><br>Supervisor de campo</div></td>
-      <td>${rs.firma ? `<img class="signature" src="${esc(rs.firma.trazo)}">` : ''}<div class="signature-line"><strong>${esc(rs.firma?.nombre || 'Cliente')}</strong><br>${esc(rs.firma?.cargo || 'Firma del cliente')}</div></td>
+      <td><div class="signature-slot">${rs.firmaSupervisor ? `<img class="signature" src="${esc(rs.firmaSupervisor.trazo)}">` : ''}</div><div class="signature-line"><strong>${esc(rs.firmaSupervisor?.nombre || rs.supervisor || 'Supervisor de campo')}</strong><br>${esc(rs.firmaSupervisor?.cargo || 'Supervisor de campo')}<span class="signature-meta">Firmado: ${esc(formatDateTime(rs.firmaSupervisor?.firmadaEn))}${rs.firmaSupervisor?.ip ? ` · IP: ${esc(rs.firmaSupervisor.ip)}` : ''}${rs.firmaSupervisor?.ubicacion ? ` · Ubicación: ${esc(formatLocation(rs.firmaSupervisor.ubicacion))}` : ''}</span></div></td>
+      <td><div class="signature-slot">${rs.firma ? `<img class="signature" src="${esc(rs.firma.trazo)}">` : ''}</div><div class="signature-line"><strong>${esc(rs.firma?.nombre || 'Cliente')}</strong><br>${esc(rs.firma?.cargo || 'Firma del cliente')}<span class="signature-meta">Firmado: ${esc(formatDateTime(rs.firma?.firmadaEn))}${rs.firma?.ip ? ` · IP: ${esc(rs.firma.ip)}` : ''}${rs.firma?.ubicacion ? ` · Ubicación: ${esc(formatLocation(rs.firma.ubicacion))}` : ''}</span></div></td>
     </tr>
   </table>
 
@@ -563,6 +575,16 @@ function cdnAsset(env: Env, path: string) {
 }
 function esc(value: unknown) {
   return String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char] ?? char);
+}
+function formatDateTime(value: unknown) {
+  if (!value) return 'No registrado';
+  const date = new Date(String(value));
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString('es-HN', { timeZone: 'America/Tegucigalpa', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+function formatLocation(value: { lat?: number; lng?: number; accuracy?: number }) {
+  if (typeof value.lat !== 'number' || typeof value.lng !== 'number') return 'No registrada';
+  return `${value.lat.toFixed(5)}, ${value.lng.toFixed(5)}${typeof value.accuracy === 'number' ? ` ±${Math.round(value.accuracy)}m` : ''}`;
 }
 async function r2ImageDataUrl(bucket: R2Bucket, key: string) {
   const object = await bucket.get(key);
