@@ -146,6 +146,7 @@ app.get('/api/reportes', async c => {
   const where: string[] = []; const params: unknown[] = [];
   if (estado && estado !== 'Todos') { where.push('estado = ?'); params.push(estado); }
   if (texto !== '%%') { where.push('(lower(id) like ? or lower(cliente) like ? or lower(ubicacion) like ?)'); params.push(texto, texto, texto); }
+  if (user.rol !== 'admin') { where.push('(supervisor = ? or creado_por = ?)'); params.push(user.nombre, user.nombre); }
   const sql = `select * from reportes ${where.length ? `where ${where.join(' and ')}` : ''} order by fecha desc limit 100`;
   const rows = await c.env.DB.prepare(sql).bind(...params).all();
   return c.json({ items: rows.results.map(rowToReport), total: rows.results.length });
@@ -174,13 +175,15 @@ app.get('/api/reportes/:id', async c => {
   const user = await requireUser(c); if (!user) return c.json({ error: 'unauthorized' }, 401);
   const row = await c.env.DB.prepare('select * from reportes where id = ?').bind(c.req.param('id')).first();
   if (!row) return c.json({ error: 'not_found' }, 404);
+  if (!canAccessReport(user, row)) return c.json({ error: 'forbidden' }, 403);
   return c.json(rowToReport(row));
 });
 
 app.put('/api/reportes/:id', async c => {
   const user = await requireUser(c); if (!user) return c.json({ error: 'unauthorized' }, 401);
   const rs = await c.req.json(); const now = new Date().toISOString();
-  const previous = await c.env.DB.prepare('select estado from reportes where id = ?').bind(c.req.param('id')).first<{ estado: string }>();
+  const previous = await c.env.DB.prepare('select estado, supervisor, creado_por from reportes where id = ?').bind(c.req.param('id')).first<Record<string, unknown>>();
+  if (previous && !canAccessReport(user, previous)) return c.json({ error: 'forbidden' }, 403);
   if (!rs.creadoPor) rs.creadoPor = user.nombre;
   if (!rs.supervisor || rs.supervisor === 'Carlos Hernández') rs.supervisor = user.nombre;
   await saveReport(c.env.DB, rs, now);
@@ -193,6 +196,9 @@ app.put('/api/reportes/:id', async c => {
 
 app.get('/api/reportes/:id/timeline', async c => {
   const user = await requireUser(c); if (!user) return c.json({ error: 'unauthorized' }, 401);
+  const report = await c.env.DB.prepare('select supervisor, creado_por from reportes where id = ?').bind(c.req.param('id')).first<Record<string, unknown>>();
+  if (!report) return c.json({ error: 'not_found' }, 404);
+  if (!canAccessReport(user, report)) return c.json({ error: 'forbidden' }, 403);
   const rows = await c.env.DB.prepare('select id, reporte_id, tipo, actor, nota, creado_en from timeline where reporte_id = ? order by creado_en asc').bind(c.req.param('id')).all<Record<string, unknown>>();
   return c.json({ items: rows.results.map(row => ({ id: String(row.id), rsId: String(row.reporte_id), tipo: String(row.tipo), actor: String(row.actor), nota: row.nota ? String(row.nota) : undefined, fecha: String(row.creado_en) })) });
 });
@@ -218,6 +224,7 @@ app.post('/api/reportes/:id/evidencias', async c => {
   const user = await requireUser(c); if (!user) return c.json({ error: 'unauthorized' }, 401);
   const row = await c.env.DB.prepare('select * from reportes where id = ?').bind(c.req.param('id')).first<Record<string, unknown>>();
   if (!row) return c.json({ error: 'not_found' }, 404);
+  if (!canAccessReport(user, row)) return c.json({ error: 'forbidden' }, 403);
   const form = await c.req.formData(); const file = form.get('file') as File | string | null;
   if (!file || typeof file === 'string') return c.json({ error: 'missing_file' }, 400);
   const categoria = String(form.get('categoria') ?? 'Durante'); const descripcion = String(form.get('descripcion') ?? file.name);
@@ -239,6 +246,7 @@ app.delete('/api/reportes/:id/evidencias/:evidenciaId', async c => {
   const user = await requireUser(c); if (!user) return c.json({ error: 'unauthorized' }, 401);
   const row = await c.env.DB.prepare('select * from reportes where id = ?').bind(c.req.param('id')).first<Record<string, unknown>>();
   if (!row) return c.json({ error: 'not_found' }, 404);
+  if (!canAccessReport(user, row)) return c.json({ error: 'forbidden' }, 403);
   const rs = rowToReport(row) as Record<string, any>; const evidencias = Array.isArray(rs.evidencias) ? rs.evidencias : [];
   const evidencia = evidencias.find((x: { id: string; blobKey?: string }) => x.id === c.req.param('evidenciaId'));
   if (evidencia?.blobKey) await c.env.FILES.delete(evidencia.blobKey);
@@ -253,30 +261,40 @@ app.post('/api/reportes/:id/pdf', async c => {
   const user = await requireUser(c); if (!user) return c.json({ error: 'unauthorized' }, 401);
   const row = await c.env.DB.prepare('select * from reportes where id = ?').bind(c.req.param('id')).first();
   if (!row) return c.json({ error: 'not_found' }, 404);
+  if (!canAccessReport(user, row)) return c.json({ error: 'forbidden' }, 403);
   const rs = rowToReport(row); const html = await renderPdfHtml(rs, c.env);
   const pdf = await c.env.BROWSER.quickAction('pdf', { html, cacheTTL: 0, pdfOptions: { format: 'letter', printBackground: true, margin: { top: '0.5in', right: '0.5in', bottom: '0.5in', left: '0.5in' } } });
   if (!pdf.ok) return c.json({ error: 'pdf_failed', detail: await pdf.text() }, 502);
   const prefix = c.env.R2_PREFIX || 'reportes';
-  const key = `${prefix}/${rs.id}/pdf/${Date.now()}.pdf`; await c.env.FILES.put(key, await pdf.arrayBuffer(), { httpMetadata: { contentType: 'application/pdf' } });
+  const bytes = await pdf.arrayBuffer();
+  const key = `${prefix}/${rs.id}/pdf/${Date.now()}.pdf`; await c.env.FILES.put(key, bytes, { httpMetadata: { contentType: 'application/pdf' } });
   await c.env.DB.prepare('insert into archivos (id, reporte_id, tipo, r2_key, creado_en) values (?, ?, ?, ?, ?)').bind(crypto.randomUUID(), rs.id, 'pdf', key, new Date().toISOString()).run();
   await c.env.DB.prepare('insert into timeline (id, reporte_id, tipo, actor, nota, creado_en) values (?, ?, ?, ?, ?, ?)')
     .bind(crypto.randomUUID(), rs.id, 'pdf_generado', user.nombre, key, new Date().toISOString()).run();
+  if (c.req.query('download') === '1') return new Response(bytes, { headers: { 'content-type': 'application/pdf', 'content-disposition': `attachment; filename="${rs.id}.pdf"` } });
   return c.json({ ok: true, key });
 });
 
 app.post('/api/reportes/:id/enviar', async c => {
   const user = await requireUser(c); if (!user) return c.json({ error: 'unauthorized' }, 401);
+  const reportRow = await c.env.DB.prepare('select * from reportes where id = ?').bind(c.req.param('id')).first<Record<string, unknown>>();
+  if (!reportRow) return c.json({ error: 'not_found' }, 404);
+  if (!canAccessReport(user, reportRow)) return c.json({ error: 'forbidden' }, 403);
+  const rs = rowToReport(reportRow);
   const body = await c.req.json<{ destinatario: string; pdfKey: string }>(); const id = crypto.randomUUID();
   const now = new Date().toISOString();
   await c.env.DB.prepare('insert into entregas (id, reporte_id, destinatario, estado, creado_en) values (?, ?, ?, ?, ?)').bind(id, c.req.param('id'), body.destinatario, 'pendiente', now).run();
   await c.env.DB.prepare('insert into timeline (id, reporte_id, tipo, actor, nota, creado_en) values (?, ?, ?, ?, ?, ?)')
     .bind(crypto.randomUUID(), c.req.param('id'), 'envio_pendiente', user.nombre, body.destinatario, now).run();
-  if (c.env.N8N_WEBHOOK_URL) await fetch(c.env.N8N_WEBHOOK_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ deliveryId: id, reporteId: c.req.param('id'), destinatario: body.destinatario, pdfKey: body.pdfKey, callbackUrl: `${new URL(c.req.url).origin}/api/entregas/${id}/estado` }) });
+  if (c.env.N8N_WEBHOOK_URL) await fetch(c.env.N8N_WEBHOOK_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ deliveryId: id, reporteId: c.req.param('id'), destinatario: body.destinatario, pdfKey: body.pdfKey, callbackUrl: `${new URL(c.req.url).origin}/api/entregas/${id}/estado`, cliente: { nombre: rs.cliente, contacto: rs.contacto, correo: rs.correo, telefono: rs.telefono, ubicacion: rs.ubicacion }, reporte: { id: rs.id, fecha: rs.fecha, tipoVisita: rs.tipoVisita, supervisor: rs.supervisor, trabajoRealizado: rs.trabajoRealizado, observaciones: rs.observaciones } }) });
   return c.json({ ok: true, deliveryId: id });
 });
 
 app.get('/api/reportes/:id/entregas', async c => {
   const user = await requireUser(c); if (!user) return c.json({ error: 'unauthorized' }, 401);
+  const report = await c.env.DB.prepare('select supervisor, creado_por from reportes where id = ?').bind(c.req.param('id')).first<Record<string, unknown>>();
+  if (!report) return c.json({ error: 'not_found' }, 404);
+  if (!canAccessReport(user, report)) return c.json({ error: 'forbidden' }, 403);
   const rows = await c.env.DB.prepare('select id, reporte_id, destinatario, estado, respuesta, creado_en, actualizado_en from entregas where reporte_id = ? order by creado_en desc limit 20').bind(c.req.param('id')).all<Record<string, unknown>>();
   return c.json({ items: rows.results.map(row => ({
     id: String(row.id),
@@ -314,6 +332,9 @@ async function requireUser(c: { req: { header(name: string): string | undefined 
   const user = rowToUser(row);
   if (role && user.rol !== role) return null;
   return user;
+}
+function canAccessReport(user: ReturnType<typeof rowToUser>, row: Record<string, unknown>) {
+  return user.rol === 'admin' || String(row.supervisor ?? '') === user.nombre || String(row.creado_por ?? row.creadoPor ?? '') === user.nombre;
 }
 async function odooExecute(env: Env, model: string, method: string, args: unknown[] = [], kwargs: Record<string, unknown> = {}) {
   if (!env.ODOO_URL || !env.ODOO_DB || !env.ODOO_USER || !(env.ODOO_API_KEY || env.ODOO_PASSWORD)) throw new Error('odoo_not_configured');
@@ -394,73 +415,151 @@ async function renderPdfHtml(rs: ReturnType<typeof rowToReport>, env: Env) {
   const personal = Array.isArray(rs.personal) ? rs.personal : [];
   const evidencias = Array.isArray(rs.evidencias) ? rs.evidencias : [];
   const fotos = await Promise.all(evidencias.map(async (e: Record<string, unknown>) => ({ ...e, dataUrl: e.blobKey ? await r2ImageDataUrl(env.FILES, String(e.blobKey)) : '' })));
-  const row = (label: string, value: unknown) => `<div><span>${esc(label)}</span><strong>${esc(value || 'No registrado')}</strong></div>`;
-  const empty = '<p class="muted">No registrado.</p>';
+  const empty = '<p class="text-muted-small">No registrado.</p>';
+  const infoCell = (label: string, value: unknown) => `<td><strong>${esc(label)}:</strong><p>${esc(value || '-')}</p></td>`;
+  const yesNo = (value: unknown) => value ? '<span class="status-pill status-yes">Sí</span>' : '<span class="status-pill status-no">No</span>';
+  const textBlock = (title: string, value: unknown) => `<div class="text-box"><strong>${esc(title)}</strong><p>${esc(value || 'No registrado.')}</p></div>`;
   return `<!doctype html>
 <html>
 <head>
   <meta charset="utf-8">
   <style>
-    @page { size: letter; margin: 0.48in; }
+    @page { size: letter; margin: 0.20in 0.42in 0.72in; }
     * { box-sizing: border-box; }
-    body { margin: 0; color: #16181C; font-family: Arial, Helvetica, sans-serif; font-size: 11px; line-height: 1.4; }
-    header { display: grid; grid-template-columns: 1fr auto; gap: 18px; align-items: start; border-bottom: 4px solid #C20E1A; padding-bottom: 14px; margin-bottom: 16px; }
-    .brand { color: #C20E1A; font-weight: 900; font-size: 24px; letter-spacing: .04em; }
-    .title { margin-top: 6px; font-size: 18px; font-weight: 900; }
-    .rs { text-align: right; }
-    .rs strong { display: block; font-size: 20px; color: #C20E1A; }
-    .rs span, .muted, .meta span, th { color: #5B6470; }
-    .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px; }
-    .grid div, section { border: 1px solid #E1E3E7; border-radius: 10px; padding: 10px; background: #fff; }
-    .grid span { display: block; color: #5B6470; font-size: 9px; text-transform: uppercase; font-weight: 800; letter-spacing: .03em; }
-    .grid strong { display: block; margin-top: 3px; font-size: 11px; }
-    section { margin: 10px 0; break-inside: avoid; }
-    h2 { margin: 0 0 8px; font-size: 13px; color: #C20E1A; text-transform: uppercase; letter-spacing: .04em; }
-    h3 { margin: 8px 0 4px; font-size: 11px; }
-    p { margin: 0 0 6px; white-space: pre-wrap; }
-    table { width: 100%; border-collapse: collapse; }
-    th { text-align: left; font-size: 9px; text-transform: uppercase; border-bottom: 1px solid #E1E3E7; padding: 6px 4px; }
-    td { border-bottom: 1px solid #F1F2F4; padding: 7px 4px; vertical-align: top; }
+    body { margin: 0; color: #222222; font-family: Arial, Helvetica, sans-serif; font-size: 12px; line-height: 1.3; }
+    .manual-header { width: 100%; border-bottom: 1px solid #dddddd; padding-bottom: 6px; margin-bottom: 10px; }
+    .manual-header-table { width: 100%; border-collapse: collapse; }
+    .manual-header-table td { border: none; vertical-align: middle; padding: 0; }
+    .manual-logo-cell { width: 34%; }
+    .manual-info-cell { width: 66%; text-align: right; }
+    .manual-logo { display: block; width: 185px; height: auto; object-fit: contain; }
+    .manual-slogan { margin: 4px 0 0; color: #C20E1A; font-size: 11px; line-height: 1.1; font-weight: 800; letter-spacing: .03em; text-transform: uppercase; }
+    .manual-company-name { font-size: 15.5px; font-weight: 700; margin: 0; line-height: 1.18; }
+    .manual-company-info { font-size: 10.2px; color: #555555; margin: 1px 0 0; line-height: 1.18; }
+    .report-title { margin-bottom: 10px; }
+    .report-title h2 { margin: 0; font-size: 21px; font-weight: 700; line-height: 1.15; }
+    .info-box, .summary-box { border: 1px solid #dddddd; background-color: #fafafa; page-break-inside: avoid; }
+    .info-box { width: 100%; padding: 7px 10px; margin: 8px 0 12px; }
+    .info-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    .info-table td { width: 25%; vertical-align: top; padding: 3px 8px 5px 3px; border: none; font-size: 11px; }
+    .info-table strong { display: block; font-size: 10.2px; color: #555555; margin-bottom: 1px; }
+    .info-table p { margin: 0; font-size: 11px; line-height: 1.22; white-space: pre-wrap; }
+    .status-pill { display: inline-block; padding: 2px 7px; border-radius: 10px; font-size: 10px; font-weight: 700; }
+    .status-yes { background-color: #e8f5e9; color: #2e7d32; }
+    .status-no { background-color: #fff3e0; color: #ef6c00; }
+    .section-title-row td { background-color: #e9ecef; border-top: 1px solid #cccccc; border-bottom: 1px solid #cccccc; font-weight: 700; color: #333333; padding: 7px 6px; text-transform: uppercase; letter-spacing: 0.3px; }
+    .o_main_table { width: 100%; table-layout: fixed; border-collapse: collapse; margin-top: 16px; page-break-inside: auto; }
+    .o_main_table th, .o_main_table td { font-size: 10.8px; line-height: 1.25; vertical-align: top; padding: 6px 4px; border: none; word-wrap: break-word; overflow-wrap: break-word; text-align: left; }
+    .o_main_table th { white-space: normal; background-color: #f2f2f2; border-bottom: 1px solid #cccccc; font-weight: 700; }
+    .o_main_table .item-row td { background-color: #ffffff; border-bottom: 1px solid #eeeeee; }
+    .o_main_table .item-row-alt td { background-color: #f7f7f7; border-bottom: 1px solid #eeeeee; }
+    .text-center { text-align: center; }
+    .text-start { text-align: left; }
+    .text-end { text-align: right; }
+    .summary-box { margin-top: 12px; padding: 7px 10px; }
+    .summary-box strong { font-size: 11.5px; }
+    .summary-box table { width: 100%; margin-top: 3px; border-collapse: collapse; table-layout: fixed; }
+    .summary-box td { font-size: 10.8px; padding: 2px 8px 2px 0; border: none; vertical-align: top; }
+    .text-muted-small { color: #666666; font-size: 11.5px; margin-top: 10px; }
+    .text-box { border: 1px solid #dddddd; background: #ffffff; padding: 10px 12px; margin-top: 10px; page-break-inside: avoid; }
+    .text-box strong { display: block; color: #555555; margin-bottom: 4px; font-size: 11.5px; }
+    .text-box p { margin: 0; white-space: pre-wrap; }
     .two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-    .badge { display: inline-block; border-radius: 999px; background: #FDEDED; color: #C20E1A; padding: 3px 8px; font-weight: 800; margin: 0 4px 4px 0; }
-    .photos { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
-    .photo { border: 1px solid #E1E3E7; border-radius: 10px; padding: 7px; break-inside: avoid; }
-    .photo img { display: block; width: 100%; height: 190px; object-fit: cover; border-radius: 7px; background: #F4F5F7; }
-    .photo strong { display: inline-block; margin-top: 6px; color: #C20E1A; }
-    .photo span { display: block; color: #5B6470; }
-    .signature { height: 96px; object-fit: contain; max-width: 100%; border: 1px solid #E1E3E7; border-radius: 8px; padding: 6px; }
-    footer { margin-top: 14px; border-top: 1px solid #E1E3E7; padding-top: 8px; color: #5B6470; font-size: 9px; display: flex; justify-content: space-between; }
+    .photos { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-top: 16px; }
+    .photo { border: 1px solid #dddddd; background: #ffffff; padding: 7px; page-break-inside: avoid; }
+    .photo img { display: block; width: 100%; height: 205px; object-fit: cover; background: #f2f2f2; }
+    .photo strong { display: inline-block; margin-top: 6px; font-size: 11.5px; color: #555555; }
+    .photo span { display: block; color: #666666; font-size: 11px; }
+    .signature-table { width: 100%; border-collapse: collapse; margin-top: 16px; page-break-inside: avoid; }
+    .signature-table td { width: 50%; vertical-align: bottom; padding: 8px 18px; border: none; text-align: center; }
+    .signature { height: 82px; max-width: 260px; object-fit: contain; display: block; margin: 0 auto 5px; }
+    .signature-line { border-top: 1px solid #555555; padding-top: 5px; font-size: 11.5px; }
+    .manual-footer { position: fixed; left: 0; right: 0; bottom: 0; height: 0.34in; border-top: 1px solid #dddddd; padding-top: 5px; color: #666666; font-size: 9.2px; line-height: 1.18; text-align: center; background: #ffffff; }
   </style>
 </head>
 <body>
-  <header>
-    <div><div class="brand">TAS HONDURAS</div><div class="title">REPORTE DE SERVICIO</div><p class="muted">Documento generado desde RS TAS.</p></div>
-    <div class="rs"><strong>${esc(rs.id)}</strong><span>${esc(rs.estado)} · Versión ${esc(rs.version)}</span></div>
-  </header>
-  <div class="grid">
-    ${row('Fecha', rs.fecha)}
-    ${row('Tipo de visita', rs.tipoVisita)}
-    ${row('Supervisor de campo', rs.supervisor)}
-    ${row('Orden de trabajo', rs.ordenTrabajo)}
-    ${row('Cliente', rs.cliente)}
-    ${row('Contacto', rs.contacto)}
-    ${row('Correo', rs.correo)}
-    ${row('Teléfono', rs.telefono)}
-    ${row('Ubicación', rs.ubicacion)}
-    ${row('Solicitado por', rs.solicitadoPor)}
-    ${row('Llegada', rs.horaLlegada)}
-    ${row('Salida', rs.horaSalida)}
+  <div class="manual-header">
+    <table class="manual-header-table">
+      <tr>
+        <td class="manual-logo-cell"><img class="manual-logo" src="https://r2.tashonduras.com/Logo%20TAS%20HNx.png" alt="TAS"><p class="manual-slogan">INTEGRANDO UN MUNDO DE<br>SOLUCIONES</p></td>
+        <td class="manual-info-cell">
+          <p class="manual-company-name">Tecnología Acceso y Seguridad S.A. de C.V.</p>
+          <p class="manual-company-info">19 Ave, 9 calle "A", Casa #94, Barrio Río de Piedras</p>
+          <p class="manual-company-info">Frente parque República de Perú</p>
+          <p class="manual-company-info">San Pedro Sula - Honduras</p>
+        </td>
+      </tr>
+    </table>
   </div>
-  <section><h2>Trabajo realizado</h2><p>${esc(rs.trabajoRealizado || 'No registrado.')}</p><h3>Observaciones</h3><p>${esc(rs.observaciones || 'No registrado.')}</p><h3>Estado actual</h3><p>${esc(rs.estadoActual || 'No registrado.')}</p></section>
-  <section><h2>Recomendaciones y pendientes</h2><div class="two"><div><h3>Recomendaciones</h3><p>${esc(rs.recomendaciones || 'No registrado.')}</p></div><div><h3>Acciones pendientes</h3><p>${esc(rs.accionesPendientes || 'No registrado.')}</p></div></div></section>
-  <section><h2>Equipos intervenidos</h2>${equipos.length ? `<table><thead><tr><th>Equipo</th><th>Serie</th><th>Ubicación</th><th>Trabajo</th></tr></thead><tbody>${equipos.map((e: Record<string, unknown>) => `<tr><td><strong>${esc(e.nombre)}</strong><br>${esc([e.marca, e.modelo].filter(Boolean).join(' '))}</td><td>${esc(e.serie)}</td><td>${esc(e.ubicacion)}</td><td>${esc(e.trabajoRealizado)}</td></tr>`).join('')}</tbody></table>` : empty}</section>
-  <section><h2>Materiales y repuestos</h2>${materiales.length ? `<table><thead><tr><th>Producto</th><th>Cantidad</th><th>Unidad</th><th>Uso</th></tr></thead><tbody>${materiales.map((m: Record<string, unknown>) => `<tr><td>${esc(m.producto)}</td><td>${esc(m.cantidad)}</td><td>${esc(m.unidad)}</td><td>${esc(m.uso)}</td></tr>`).join('')}</tbody></table>` : empty}</section>
-  <section><h2>Personal participante</h2>${personal.length ? `<table><thead><tr><th>Nombre</th><th>Rol</th><th>Entrada</th><th>Salida</th></tr></thead><tbody>${personal.map((p: Record<string, unknown>) => `<tr><td>${esc(p.nombre)}</td><td>${esc(p.rol)}</td><td>${esc(p.horaEntrada)}</td><td>${esc(p.horaSalida)}</td></tr>`).join('')}</tbody></table>` : empty}</section>
-  <section><h2>Evidencias fotográficas</h2>${fotos.length ? `<div class="photos">${fotos.map((e: Record<string, unknown>) => `<div class="photo">${e.dataUrl ? `<img src="${esc(e.dataUrl)}" alt="${esc(e.descripcion)}">` : ''}<strong>${esc(e.categoria)}</strong><span>${esc(e.descripcion)}</span></div>`).join('')}</div>` : empty}</section>
-  <section><h2>Firma del cliente</h2>${rs.firma ? `<img class="signature" src="${esc(rs.firma.trazo)}"><p><strong>${esc(rs.firma.nombre)}</strong><br>${esc(rs.firma.cargo || '')}<br>${esc(new Date(rs.firma.firmadaEn).toLocaleString('es-HN'))}</p>` : '<p class="muted">Pendiente de firma.</p>'}</section>
-  <footer><span>Generado por ${esc(rs.creadoPor || rs.supervisor)}</span><span>${esc(new Date().toLocaleString('es-HN'))}</span></footer>
+
+  <div class="report-title">
+    <h2>Reporte de Servicio # ${esc(rs.id)}</h2>
+  </div>
+
+  <div class="info-box">
+    <table class="info-table">
+      <tr>${infoCell('Cliente', rs.cliente)}${infoCell('Contacto', rs.contacto)}${infoCell('Fecha', rs.fecha)}${infoCell('Tipo', rs.tipoVisita)}</tr>
+      <tr>${infoCell('Ubicación', rs.ubicacion)}${infoCell('Correo', rs.correo)}${infoCell('Supervisor', rs.supervisor)}${infoCell('OT', rs.ordenTrabajo)}</tr>
+      <tr>${infoCell('Teléfono', rs.telefono)}${infoCell('Llegada', rs.horaLlegada)}${infoCell('Salida', rs.horaSalida)}<td><strong>Próxima visita:</strong><p>${yesNo(rs.proximaVisita)}</p></td></tr>
+    </table>
+  </div>
+
+  <table class="o_main_table">
+    <tbody>
+      <tr class="section-title-row"><td colspan="2">Detalle del servicio</td></tr>
+    </tbody>
+  </table>
+  ${textBlock('Trabajo realizado', rs.trabajoRealizado)}
+  <div class="two">
+    ${textBlock('Observaciones', rs.observaciones)}
+    ${textBlock('Estado actual', rs.estadoActual)}
+  </div>
+  <div class="two">
+    ${textBlock('Recomendaciones', rs.recomendaciones)}
+    ${textBlock('Acciones pendientes', rs.accionesPendientes)}
+  </div>
+
+  <table class="o_main_table">
+    <thead><tr><th class="text-start" style="width:24%">Equipo</th><th class="text-start" style="width:16%">Serie</th><th class="text-start" style="width:20%">Ubicación</th><th class="text-start" style="width:40%">Trabajo realizado</th></tr></thead>
+    <tbody>${equipos.length ? equipos.map((e: Record<string, unknown>, i: number) => `<tr class="${i % 2 ? 'item-row item-row-alt' : 'item-row'}"><td class="text-start"><strong>${esc(e.nombre)}</strong><br>${esc([e.marca, e.modelo].filter(Boolean).join(' '))}</td><td class="text-start">${esc(e.serie || '-')}</td><td class="text-start">${esc(e.ubicacion || '-')}</td><td class="text-start">${esc(e.trabajoRealizado || '-')}</td></tr>`).join('') : `<tr><td colspan="4" class="text-center">No hay equipos registrados.</td></tr>`}</tbody>
+  </table>
+
+  <table class="o_main_table">
+    <thead><tr><th class="text-start" style="width:45%">Material / repuesto</th><th class="text-center" style="width:15%">Cantidad</th><th class="text-center" style="width:20%">Unidad</th><th class="text-center" style="width:20%">Uso</th></tr></thead>
+    <tbody>${materiales.length ? materiales.map((m: Record<string, unknown>, i: number) => `<tr class="${i % 2 ? 'item-row item-row-alt' : 'item-row'}"><td class="text-start">${esc(m.producto)}</td><td class="text-center">${esc(m.cantidad)}</td><td class="text-center">${esc(m.unidad)}</td><td class="text-center">${esc(m.uso)}</td></tr>`).join('') : `<tr><td colspan="4" class="text-center">No hay materiales registrados.</td></tr>`}</tbody>
+  </table>
+
+  <table class="o_main_table">
+    <thead><tr><th class="text-start" style="width:40%">Personal participante</th><th class="text-center" style="width:20%">Rol</th><th class="text-center" style="width:20%">Entrada</th><th class="text-center" style="width:20%">Salida</th></tr></thead>
+    <tbody>${personal.length ? personal.map((p: Record<string, unknown>, i: number) => `<tr class="${i % 2 ? 'item-row item-row-alt' : 'item-row'}"><td class="text-start">${esc(p.nombre)}</td><td class="text-center">${esc(p.rol)}</td><td class="text-center">${esc(p.horaEntrada || '-')}</td><td class="text-center">${esc(p.horaSalida || '-')}</td></tr>`).join('') : `<tr><td colspan="4" class="text-center">No hay personal registrado.</td></tr>`}</tbody>
+  </table>
+
+  <div class="summary-box">
+    <strong>Resumen del reporte:</strong>
+    <table>
+      <tr><td>Equipos: <strong>${equipos.length}</strong></td><td>Materiales: <strong>${materiales.length}</strong></td><td>Evidencias: <strong>${fotos.length}</strong></td><td>Estado: <strong>${esc(rs.estado)}</strong></td></tr>
+    </table>
+  </div>
+
+  <table class="o_main_table">
+    <tbody><tr class="section-title-row"><td>Evidencias fotográficas</td></tr></tbody>
+  </table>
+  ${fotos.length ? `<div class="photos">${fotos.map((e: Record<string, unknown>) => `<div class="photo">${e.dataUrl ? `<img src="${esc(e.dataUrl)}" alt="${esc(e.descripcion)}">` : ''}<strong>${esc(e.categoria)}</strong><span>${esc(e.descripcion)}</span></div>`).join('')}</div>` : empty}
+
+  <table class="signature-table">
+    <tr>
+      <td><div class="signature-line"><strong>${esc(rs.supervisor || 'Supervisor de campo')}</strong><br>Supervisor de campo</div></td>
+      <td>${rs.firma ? `<img class="signature" src="${esc(rs.firma.trazo)}">` : ''}<div class="signature-line"><strong>${esc(rs.firma?.nombre || 'Cliente')}</strong><br>${esc(rs.firma?.cargo || 'Firma del cliente')}</div></td>
+    </tr>
+  </table>
+
+  <p class="text-muted-small">Este documento registra el servicio realizado y la aceptación de los trabajos descritos.</p>
+  <div class="manual-footer">+504 9463-3724 | infohns@tas-seguridad.com; servicioalclientehn@tas-seguridad.com | www.tas-seguridad.com | 05019006484414</div>
 </body>
 </html>`;
+}
+function cdnAsset(env: Env, path: string) {
+  return `${env.APP_ORIGIN.replace(/\/$/, '')}${path}`;
 }
 function esc(value: unknown) {
   return String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char] ?? char);

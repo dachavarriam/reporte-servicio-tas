@@ -1,0 +1,6 @@
+.delivery-item{display:grid;gap:4px}
+.delivery-badge{display:inline-flex;width:max-content;border-radius:999px;padding:5px 9px;font-size:12px;font-weight:900}
+.delivery-badge.pendiente{background:#FFF4E5;color:#A66400}
+.delivery-badge.enviado{background:#E7F6EC;color:#117A3B}
+.delivery-badge.fallido{background:#FCEBEC;color:#B4232C}
+.client-history-row{width:100%;background:transparent;border:0;display:grid;grid-template-columns:1fr auto auto;align-items:center;gap:10px;text-align:left}

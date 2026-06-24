@@ -5,7 +5,7 @@ import { jsonHeaders, authHeaders } from '../data/api';
 import type { RolUsuario, Usuario } from '../domain/types';
 import { useApp } from '../store/app';
 
-const roles: RolUsuario[] = ['admin', 'supervisor', 'tecnico'];
+const roles: RolUsuario[] = ['admin', 'supervisor'];
 
 export function UsersPage() {
   const current = useApp(s => s.user); const notify = useApp(s => s.notify);
@@ -52,7 +52,7 @@ export function UsersPage() {
   if (current?.rol !== 'admin') return <div className="page"><div className="alert warning"><ShieldCheck /> Solo un administrador puede gestionar usuarios.</div></div>;
 
   return <div className="page">
-    <div className="page-heading"><h1>Usuarios</h1><p>Alta inicial de técnicos, supervisores y administradores.</p></div>
+    <div className="page-heading"><h1>Usuarios</h1><p>Alta inicial de administradores y supervisores.</p></div>
     <section className="detail-section">
       <div className="section-title"><h2>Crear usuario</h2><UserPlus /></div>
       <form className="form-grid" onSubmit={createUser}>

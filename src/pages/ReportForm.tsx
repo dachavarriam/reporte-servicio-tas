@@ -40,7 +40,7 @@ export function ReportForm() {
       setSaving(false);
     }
   };
-  const upload = async (e: ChangeEvent<HTMLInputElement>) => { try { const saved = rs?.id ? rs : await saveReport(); if (!saved?.id) return notify('Guarde el RS antes de subir fotos'); for (const file of Array.from(e.target.files ?? [])) await reports.putEvidencia(saved.id, file, { categoria: photoCategory, descripcion: file.name }); setRs(await reports.get(saved.id)); e.target.value = ''; notify(`Evidencia ${photoCategory.toLowerCase()} guardada en R2`); } catch { notify('No se pudo guardar la evidencia'); } };
+  const upload = async (e: ChangeEvent<HTMLInputElement>) => { try { const saved = rs?.id ? rs : await saveReport(); if (!saved?.id) return notify('Guarde el RS antes de subir fotos'); for (const file of Array.from(e.target.files ?? [])) await reports.putEvidencia(saved.id, await compressImage(file), { categoria: photoCategory, descripcion: file.name }); setRs(await reports.get(saved.id)); e.target.value = ''; notify(`Evidencia ${photoCategory.toLowerCase()} guardada en R2`); } catch { notify('No se pudo guardar la evidencia'); } };
   const finalize = async () => { const saved = rs?.id ? rs : await saveReport(); if (!saved) return; if (!saved.firma) return setSign(true); if (saved.estado !== 'Firmado') await reports.transition(saved.id, 'Firmado'); notify('Reporte firmado y listo para generar PDF'); await reload(); nav(`/rs/${saved.id}`); };
   const saveAndFinalizeSignature = async (firma: ReporteServicio['firma']) => { if (!rs) return; const base = rs.id ? rs : await reports.createDraft(rs); const updated = { ...base, firma }; await reports.saveDraft(updated); const signed = await reports.transition(updated.id, 'Firmado'); setRs({ ...signed, firma }); setDirty(false); setSign(false); notify('Firma guardada y RS firmado'); await reload(); nav(`/rs/${updated.id}`); };
   if (!rs) return <div className="loading">Preparando borrador…</div>;
@@ -56,3 +56,18 @@ export function ReportForm() {
 }
 function Dynamic({ children, title, addLabel, onAdd }: { children: React.ReactNode; title: string; addLabel: string; onAdd: () => void }) { return <section className="dynamic"><h2>{title}</h2>{children}<Button variant="outline" className="add-dashed" onClick={onAdd}><Plus /> {addLabel}</Button></section> }
 function blankReport(nombre: string): ReporteServicio { const now = new Date().toISOString(); return { id: '', estado: 'Borrador', version: 1, fecha: now.slice(0, 10), cliente: '', contacto: '', correo: '', telefono: '', ubicacion: '', solicitadoPor: '', tipoVisita: 'Mantenimiento', horaLlegada: '', horaSalida: '', trabajoRealizado: '', observaciones: '', estadoActual: 'Operativo', recomendaciones: '', accionesPendientes: '', proximaVisita: false, equipos: [], materiales: [], personal: [], evidencias: [], supervisor: nombre, creadoPor: nombre, creadoEn: now, actualizadoEn: now }; }
+async function compressImage(file: File) {
+  if (!file.type.startsWith('image/') || file.type === 'image/gif') return file;
+  const bitmap = await createImageBitmap(file);
+  const max = 1800;
+  const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height));
+  const width = Math.round(bitmap.width * scale);
+  const height = Math.round(bitmap.height * scale);
+  const canvas = document.createElement('canvas');
+  canvas.width = width; canvas.height = height;
+  canvas.getContext('2d')?.drawImage(bitmap, 0, 0, width, height);
+  const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.82));
+  bitmap.close();
+  if (!blob || blob.size >= file.size) return file;
+  return new File([blob], file.name.replace(/\.[^.]+$/, '.jpg'), { type: 'image/jpeg', lastModified: Date.now() });
+}
