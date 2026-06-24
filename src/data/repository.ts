@@ -10,6 +10,7 @@ export interface ReportRepository {
   createDraft(partial?: Partial<ReporteServicio>): Promise<ReporteServicio>;
   saveDraft(rs: ReporteServicio): Promise<void>;
   transition(id: string, to: EstadoRS, nota?: string): Promise<ReporteServicio>;
+  delete(id: string): Promise<void>;
   putEvidencia(rsId: string, file: Blob, meta: { categoria: CategoriaFoto; descripcion: string }): Promise<void>;
   removeEvidencia(rsId: string, evidenciaId: string): Promise<void>;
   searchClientes(texto: string): Promise<Cliente[]>;
@@ -43,6 +44,7 @@ export class LocalReportRepository implements ReportRepository {
   }
   async saveDraft(rs: ReporteServicio) { const saved = { ...rs, version: rs.version + 1, actualizadoEn: new Date().toISOString() }; await db.reportes.put(saved); await db.outbox.put({ id: uid(), type: 'save', rsId: rs.id, payload: saved, createdAt: saved.actualizadoEn, attempts: 0 }); }
   async transition(id: string, to: EstadoRS, nota?: string) { const rs = await this.get(id); if (!rs) throw new Error('Reporte no encontrado'); if (!allowed[rs.estado].includes(to)) throw new Error(`Transición no permitida: ${rs.estado} → ${to}`); const saved = { ...rs, estado: to, version: rs.version + 1, actualizadoEn: new Date().toISOString() }; await db.reportes.put(saved); await db.timeline.put({ id: uid(), rsId: id, tipo: to.toLowerCase().replaceAll(' ', '_'), actor: rs.supervisor, fecha: saved.actualizadoEn, nota }); return saved; }
+  async delete(id: string) { await db.reportes.delete(id); await db.timeline.where('rsId').equals(id).delete(); }
   async putEvidencia(rsId: string, file: Blob, meta: { categoria: CategoriaFoto; descripcion: string }) { const rs = await this.get(rsId); if (!rs) throw new Error('Reporte no encontrado'); const id = uid(); await db.evidencias.put({ id, rsId, blob: file }); rs.evidencias.push({ id, blobKey: id, categoria: meta.categoria, descripcion: meta.descripcion, orden: rs.evidencias.length }); await this.saveDraft(rs); }
   async removeEvidencia(rsId: string, evidenciaId: string) { const rs = await this.get(rsId); if (!rs) return; rs.evidencias = rs.evidencias.filter(x => x.id !== evidenciaId); await db.evidencias.delete(evidenciaId); await this.saveDraft(rs); }
   async searchClientes(texto: string) { await this.ready(); return db.clientes.filter(x => x.nombre.toLowerCase().includes(texto.toLowerCase())).limit(5).toArray(); }
@@ -65,11 +67,11 @@ export class RemoteReportRepository implements ReportRepository {
   async get(id: string) { try { return await this.request<ReporteServicio>(`/api/reportes/${encodeURIComponent(id)}`); } catch { return null; } }
   async timeline(id: string) { return this.local.timeline(id); }
   async createDraft(partial: Partial<ReporteServicio> = {}) {
-    const rs = await this.request<ReporteServicio>('/api/reportes', { method: 'POST', body: JSON.stringify(partial) });
-    return { ...rs, ...partial, supervisor: partial.supervisor ?? rs.supervisor, creadoPor: partial.creadoPor ?? rs.creadoPor };
+    return this.request<ReporteServicio>('/api/reportes', { method: 'POST', body: JSON.stringify(partial) });
   }
   async saveDraft(rs: ReporteServicio) { await this.request(`/api/reportes/${encodeURIComponent(rs.id)}`, { method: 'PUT', body: JSON.stringify(rs) }); }
   async transition(id: string, to: EstadoRS, nota?: string) { const rs = await this.get(id); if (!rs) throw new Error('Reporte no encontrado'); const saved = { ...rs, estado: to, version: rs.version + 1, actualizadoEn: new Date().toISOString() }; await this.saveDraft(saved); await this.local.transition(id, to, nota).catch(() => undefined); return saved; }
+  async delete(id: string) { await this.request(`/api/reportes/${encodeURIComponent(id)}`, { method: 'DELETE' }); }
   async putEvidencia(rsId: string, file: Blob, meta: { categoria: CategoriaFoto; descripcion: string }) {
     const data = new FormData();
     data.set('file', file);
