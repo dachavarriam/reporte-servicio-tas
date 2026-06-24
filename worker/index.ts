@@ -234,7 +234,7 @@ app.post('/api/reportes/:id/enviar', async c => {
   const user = await requireUser(c); if (!user) return c.json({ error: 'unauthorized' }, 401);
   const body = await c.req.json<{ destinatario: string; pdfKey: string }>(); const id = crypto.randomUUID();
   await c.env.DB.prepare('insert into entregas (id, reporte_id, destinatario, estado, creado_en) values (?, ?, ?, ?, ?)').bind(id, c.req.param('id'), body.destinatario, 'pendiente', new Date().toISOString()).run();
-  if (c.env.N8N_WEBHOOK_URL) await fetch(c.env.N8N_WEBHOOK_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ deliveryId: id, reporteId: c.req.param('id'), destinatario: body.destinatario, pdfKey: body.pdfKey }) });
+  if (c.env.N8N_WEBHOOK_URL) await fetch(c.env.N8N_WEBHOOK_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ deliveryId: id, reporteId: c.req.param('id'), destinatario: body.destinatario, pdfKey: body.pdfKey, callbackUrl: `${new URL(c.req.url).origin}/api/entregas/${id}/estado` }) });
   return c.json({ ok: true, deliveryId: id });
 });
 
@@ -255,10 +255,11 @@ app.get('/api/reportes/:id/entregas', async c => {
 app.post('/api/entregas/:id/estado', async c => {
   if (!c.env.N8N_CALLBACK_SECRET) return c.json({ error: 'callback_secret_not_configured' }, 503);
   if (!(await safeEqual(c.req.header('x-rs-callback-secret') ?? '', c.env.N8N_CALLBACK_SECRET))) return c.json({ error: 'unauthorized' }, 401);
-  const body = await c.req.json<{ estado: 'enviado' | 'fallido'; provider?: string; providerMessageId?: string; detalle?: string }>();
-  if (!['enviado', 'fallido'].includes(body.estado)) return c.json({ error: 'invalid_estado' }, 400);
-  await c.env.DB.prepare('update entregas set estado = ?, respuesta = ?, actualizado_en = ? where id = ?')
+  const body = await c.req.json<{ estado: 'pendiente' | 'enviado' | 'fallido'; provider?: string; providerMessageId?: string; detalle?: string }>();
+  if (!['pendiente', 'enviado', 'fallido'].includes(body.estado)) return c.json({ error: 'invalid_estado' }, 400);
+  const result = await c.env.DB.prepare('update entregas set estado = ?, respuesta = ?, actualizado_en = ? where id = ?')
     .bind(body.estado, JSON.stringify({ provider: body.provider ?? 'slack', providerMessageId: body.providerMessageId ?? '', detalle: body.detalle ?? '' }), new Date().toISOString(), c.req.param('id')).run();
+  if (result.meta.changes === 0) return c.json({ error: 'not_found' }, 404);
   return c.json({ ok: true });
 });
 
