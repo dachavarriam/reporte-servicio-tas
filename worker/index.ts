@@ -10,14 +10,35 @@ app.get('/api/health', c => c.json({ ok: true, service: 'rs-tas', time: new Date
 
 app.post('/api/auth/login', async c => {
   const body = await c.req.json<{ usuario: string; password: string }>();
-  const row = await c.env.DB.prepare('select id, usuario, nombre, correo, telefono, rol, activo, password_hash from usuarios where lower(usuario) = lower(?) and activo = 1')
-    .bind(body.usuario).first<Record<string, unknown>>();
-  if (!row) return c.json({ error: 'invalid_credentials' }, 401);
-  const hash = await sha256(body.password);
-  if (hash !== row.password_hash) return c.json({ error: 'invalid_credentials' }, 401);
+  const usuario = body.usuario.trim().toLowerCase();
+  const ip = c.req.header('cf-connecting-ip') ?? c.req.header('x-forwarded-for') ?? 'unknown';
+  if (await isLoginLocked(c.env.DB, usuario, ip)) return c.json({ error: 'too_many_attempts' }, 429);
+  const row = await c.env.DB.prepare('select id, usuario, nombre, correo, telefono, rol, activo, password_hash, must_change_password from usuarios where lower(usuario) = lower(?) and activo = 1')
+    .bind(usuario).first<Record<string, unknown>>();
+  if (!row) { await recordLoginAttempt(c.env.DB, usuario, ip, false); return c.json({ error: 'invalid_credentials' }, 401); }
+  const verification = await verifyPassword(body.password, String(row.password_hash));
+  if (!verification.ok) { await recordLoginAttempt(c.env.DB, usuario, ip, false); return c.json({ error: 'invalid_credentials' }, 401); }
+  if (verification.needsUpgrade) await c.env.DB.prepare('update usuarios set password_hash = ? where id = ?').bind(await hashPassword(body.password), row.id).run();
+  await recordLoginAttempt(c.env.DB, usuario, ip, true);
+  await c.env.DB.prepare('delete from login_attempts where usuario = ? and ip = ?').bind(usuario, ip).run();
   const token = crypto.randomUUID(); const now = new Date(); const expires = new Date(now.getTime() + 1000 * 60 * 60 * 24 * 14);
   await c.env.DB.prepare('insert into sesiones (token, usuario_id, creado_en, expira_en) values (?, ?, ?, ?)').bind(token, row.id, now.toISOString(), expires.toISOString()).run();
   return c.json({ user: rowToUser(row), token });
+});
+
+app.post('/api/auth/change-password', async c => {
+  const header = c.req.header('authorization') ?? ''; const token = header.startsWith('Bearer ') ? header.slice(7) : '';
+  if (!token) return c.json({ error: 'unauthorized' }, 401);
+  const body = await c.req.json<{ currentPassword: string; newPassword: string }>();
+  if (!body.newPassword || body.newPassword.length < 10) return c.json({ error: 'weak_password' }, 400);
+  const row = await c.env.DB.prepare(`select u.id, u.password_hash from sesiones s join usuarios u on u.id = s.usuario_id where s.token = ? and s.expira_en > ? and u.activo = 1`)
+    .bind(token, new Date().toISOString()).first<Record<string, unknown>>();
+  if (!row) return c.json({ error: 'unauthorized' }, 401);
+  const verification = await verifyPassword(body.currentPassword, String(row.password_hash));
+  if (!verification.ok) return c.json({ error: 'invalid_current_password' }, 401);
+  await c.env.DB.prepare('update usuarios set password_hash = ?, must_change_password = 0 where id = ?').bind(await hashPassword(body.newPassword), row.id).run();
+  await c.env.DB.prepare('delete from sesiones where usuario_id = ? and token <> ?').bind(row.id, token).run();
+  return c.json({ ok: true });
 });
 
 app.get('/api/odoo/clientes', async c => {
@@ -91,7 +112,7 @@ app.post('/api/usuarios', async c => {
   const user = await requireUser(c, 'admin'); if (!user) return c.json({ error: 'unauthorized' }, 401);
   const body = await c.req.json<{ usuario: string; nombre: string; correo: string; telefono?: string; rol: RolUsuario; password: string }>();
   if (!body.usuario || !body.nombre || !body.correo || !body.rol || !body.password) return c.json({ error: 'missing_fields' }, 400);
-  const id = crypto.randomUUID(); const now = new Date().toISOString(); const hash = await sha256(body.password);
+  const id = crypto.randomUUID(); const now = new Date().toISOString(); const hash = await hashPassword(body.password);
   await c.env.DB.prepare('insert into usuarios (id, usuario, nombre, correo, telefono, rol, activo, password_hash, must_change_password, creado_en) values (?, ?, ?, ?, ?, ?, 1, ?, 1, ?)')
     .bind(id, body.usuario.trim().toLowerCase(), body.nombre.trim(), body.correo.trim().toLowerCase(), body.telefono ?? '', body.rol, hash, now).run();
   return c.json({ ok: true, user: { id, usuario: body.usuario.trim().toLowerCase(), nombre: body.nombre.trim(), correo: body.correo.trim().toLowerCase(), telefono: body.telefono ?? '', rol: body.rol, activo: true } }, 201);
@@ -102,7 +123,7 @@ app.put('/api/usuarios/:id', async c => {
   const body = await c.req.json<{ nombre: string; correo: string; telefono?: string; rol: RolUsuario; activo: boolean; password?: string }>();
   if (body.password) {
     await c.env.DB.prepare('update usuarios set nombre = ?, correo = ?, telefono = ?, rol = ?, activo = ?, password_hash = ?, must_change_password = 1 where id = ?')
-      .bind(body.nombre, body.correo, body.telefono ?? '', body.rol, body.activo ? 1 : 0, await sha256(body.password), c.req.param('id')).run();
+      .bind(body.nombre, body.correo, body.telefono ?? '', body.rol, body.activo ? 1 : 0, await hashPassword(body.password), c.req.param('id')).run();
   } else {
     await c.env.DB.prepare('update usuarios set nombre = ?, correo = ?, telefono = ?, rol = ?, activo = ? where id = ?')
       .bind(body.nombre, body.correo, body.telefono ?? '', body.rol, body.activo ? 1 : 0, c.req.param('id')).run();
@@ -159,10 +180,21 @@ app.get('/api/reportes/:id', async c => {
 app.put('/api/reportes/:id', async c => {
   const user = await requireUser(c); if (!user) return c.json({ error: 'unauthorized' }, 401);
   const rs = await c.req.json(); const now = new Date().toISOString();
+  const previous = await c.env.DB.prepare('select estado from reportes where id = ?').bind(c.req.param('id')).first<{ estado: string }>();
   if (!rs.creadoPor) rs.creadoPor = user.nombre;
   if (!rs.supervisor || rs.supervisor === 'Carlos Hernández') rs.supervisor = user.nombre;
   await saveReport(c.env.DB, rs, now);
+  if (previous?.estado && previous.estado !== rs.estado) {
+    await c.env.DB.prepare('insert into timeline (id, reporte_id, tipo, actor, nota, creado_en) values (?, ?, ?, ?, ?, ?)')
+      .bind(crypto.randomUUID(), rs.id, rs.estado.toLowerCase().replaceAll(' ', '_'), user.nombre, `Estado cambiado de ${previous.estado} a ${rs.estado}`, now).run();
+  }
   return c.json({ ok: true, actualizadoEn: now });
+});
+
+app.get('/api/reportes/:id/timeline', async c => {
+  const user = await requireUser(c); if (!user) return c.json({ error: 'unauthorized' }, 401);
+  const rows = await c.env.DB.prepare('select id, reporte_id, tipo, actor, nota, creado_en from timeline where reporte_id = ? order by creado_en asc').bind(c.req.param('id')).all<Record<string, unknown>>();
+  return c.json({ items: rows.results.map(row => ({ id: String(row.id), rsId: String(row.reporte_id), tipo: String(row.tipo), actor: String(row.actor), nota: row.nota ? String(row.nota) : undefined, fecha: String(row.creado_en) })) });
 });
 
 app.delete('/api/reportes/:id', async c => {
@@ -221,19 +253,24 @@ app.post('/api/reportes/:id/pdf', async c => {
   const user = await requireUser(c); if (!user) return c.json({ error: 'unauthorized' }, 401);
   const row = await c.env.DB.prepare('select * from reportes where id = ?').bind(c.req.param('id')).first();
   if (!row) return c.json({ error: 'not_found' }, 404);
-  const rs = rowToReport(row); const html = renderPdfHtml(rs);
+  const rs = rowToReport(row); const html = await renderPdfHtml(rs, c.env);
   const pdf = await c.env.BROWSER.quickAction('pdf', { html, cacheTTL: 0, pdfOptions: { format: 'letter', printBackground: true, margin: { top: '0.5in', right: '0.5in', bottom: '0.5in', left: '0.5in' } } });
   if (!pdf.ok) return c.json({ error: 'pdf_failed', detail: await pdf.text() }, 502);
   const prefix = c.env.R2_PREFIX || 'reportes';
   const key = `${prefix}/${rs.id}/pdf/${Date.now()}.pdf`; await c.env.FILES.put(key, await pdf.arrayBuffer(), { httpMetadata: { contentType: 'application/pdf' } });
   await c.env.DB.prepare('insert into archivos (id, reporte_id, tipo, r2_key, creado_en) values (?, ?, ?, ?, ?)').bind(crypto.randomUUID(), rs.id, 'pdf', key, new Date().toISOString()).run();
+  await c.env.DB.prepare('insert into timeline (id, reporte_id, tipo, actor, nota, creado_en) values (?, ?, ?, ?, ?, ?)')
+    .bind(crypto.randomUUID(), rs.id, 'pdf_generado', user.nombre, key, new Date().toISOString()).run();
   return c.json({ ok: true, key });
 });
 
 app.post('/api/reportes/:id/enviar', async c => {
   const user = await requireUser(c); if (!user) return c.json({ error: 'unauthorized' }, 401);
   const body = await c.req.json<{ destinatario: string; pdfKey: string }>(); const id = crypto.randomUUID();
-  await c.env.DB.prepare('insert into entregas (id, reporte_id, destinatario, estado, creado_en) values (?, ?, ?, ?, ?)').bind(id, c.req.param('id'), body.destinatario, 'pendiente', new Date().toISOString()).run();
+  const now = new Date().toISOString();
+  await c.env.DB.prepare('insert into entregas (id, reporte_id, destinatario, estado, creado_en) values (?, ?, ?, ?, ?)').bind(id, c.req.param('id'), body.destinatario, 'pendiente', now).run();
+  await c.env.DB.prepare('insert into timeline (id, reporte_id, tipo, actor, nota, creado_en) values (?, ?, ?, ?, ?, ?)')
+    .bind(crypto.randomUUID(), c.req.param('id'), 'envio_pendiente', user.nombre, body.destinatario, now).run();
   if (c.env.N8N_WEBHOOK_URL) await fetch(c.env.N8N_WEBHOOK_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ deliveryId: id, reporteId: c.req.param('id'), destinatario: body.destinatario, pdfKey: body.pdfKey, callbackUrl: `${new URL(c.req.url).origin}/api/entregas/${id}/estado` }) });
   return c.json({ ok: true, deliveryId: id });
 });
@@ -257,9 +294,14 @@ app.post('/api/entregas/:id/estado', async c => {
   if (!(await safeEqual(c.req.header('x-rs-callback-secret') ?? '', c.env.N8N_CALLBACK_SECRET))) return c.json({ error: 'unauthorized' }, 401);
   const body = await c.req.json<{ estado: 'pendiente' | 'enviado' | 'fallido'; provider?: string; providerMessageId?: string; detalle?: string }>();
   if (!['pendiente', 'enviado', 'fallido'].includes(body.estado)) return c.json({ error: 'invalid_estado' }, 400);
+  const entrega = await c.env.DB.prepare('select reporte_id, destinatario from entregas where id = ?').bind(c.req.param('id')).first<{ reporte_id: string; destinatario: string }>();
+  if (!entrega) return c.json({ error: 'not_found' }, 404);
+  const now = new Date().toISOString();
   const result = await c.env.DB.prepare('update entregas set estado = ?, respuesta = ?, actualizado_en = ? where id = ?')
-    .bind(body.estado, JSON.stringify({ provider: body.provider ?? 'slack', providerMessageId: body.providerMessageId ?? '', detalle: body.detalle ?? '' }), new Date().toISOString(), c.req.param('id')).run();
+    .bind(body.estado, JSON.stringify({ provider: body.provider ?? 'slack', providerMessageId: body.providerMessageId ?? '', detalle: body.detalle ?? '' }), now, c.req.param('id')).run();
   if (result.meta.changes === 0) return c.json({ error: 'not_found' }, 404);
+  await c.env.DB.prepare('insert into timeline (id, reporte_id, tipo, actor, nota, creado_en) values (?, ?, ?, ?, ?, ?)')
+    .bind(crypto.randomUUID(), entrega.reporte_id, `envio_${body.estado}`, body.provider ?? 'n8n', body.detalle ?? entrega.destinatario, now).run();
   return c.json({ ok: true });
 });
 
@@ -293,6 +335,35 @@ async function odooRpc<T>(baseUrl: string, service: string, method: string, args
 }
 function cleanOdoo(value: unknown) { return value && value !== false ? String(value) : ''; }
 async function sha256(value: string) { const data = new TextEncoder().encode(value); const digest = await crypto.subtle.digest('SHA-256', data); return [...new Uint8Array(digest)].map(x => x.toString(16).padStart(2, '0')).join(''); }
+async function hashPassword(password: string) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iterations = 100000;
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations }, key, 256);
+  return `pbkdf2$sha256$${iterations}$${base64(salt)}$${base64(new Uint8Array(bits))}`;
+}
+async function verifyPassword(password: string, stored: string) {
+  if (/^[a-f0-9]{64}$/i.test(stored)) return { ok: await safeEqual(await sha256(password), stored), needsUpgrade: true };
+  const parts = stored.split('$');
+  if (parts.length !== 5 || parts[0] !== 'pbkdf2' || parts[1] !== 'sha256') return { ok: false, needsUpgrade: false };
+  const iterations = Number(parts[2]);
+  if (!Number.isFinite(iterations) || iterations < 100000) return { ok: false, needsUpgrade: false };
+  const salt = fromBase64(parts[3]);
+  const expected = parts[4];
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations }, key, 256);
+  return { ok: await safeEqual(base64(new Uint8Array(bits)), expected), needsUpgrade: iterations < 100000 };
+}
+async function isLoginLocked(db: D1Database, usuario: string, ip: string) {
+  const since = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+  const row = await db.prepare('select count(*) as total from login_attempts where usuario = ? and ip = ? and ok = 0 and creado_en > ?').bind(usuario, ip, since).first<{ total: number }>();
+  return Number(row?.total ?? 0) >= 5;
+}
+async function recordLoginAttempt(db: D1Database, usuario: string, ip: string, ok: boolean) {
+  const now = new Date().toISOString();
+  await db.prepare('insert into login_attempts (id, usuario, ip, ok, creado_en) values (?, ?, ?, ?, ?)').bind(crypto.randomUUID(), usuario, ip, ok ? 1 : 0, now).run();
+  await db.prepare('delete from login_attempts where creado_en < ?').bind(new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()).run();
+}
 async function safeEqual(a: string, b: string) {
   const [left, right] = await Promise.all([crypto.subtle.digest('SHA-256', new TextEncoder().encode(a)), crypto.subtle.digest('SHA-256', new TextEncoder().encode(b))]);
   const x = new Uint8Array(left); const y = new Uint8Array(right);
@@ -300,17 +371,29 @@ async function safeEqual(a: string, b: string) {
   for (let i = 0; i < Math.max(x.length, y.length); i += 1) diff |= (x[i] ?? 0) ^ (y[i] ?? 0);
   return diff === 0;
 }
-function rowToUser(row: Record<string, unknown>) { return { id: String(row.id), usuario: String(row.usuario), nombre: String(row.nombre), correo: String(row.correo), telefono: String(row.telefono ?? ''), rol: row.rol as RolUsuario, activo: Boolean(row.activo) }; }
+function base64(bytes: Uint8Array) {
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.slice(i, i + 0x8000));
+  return btoa(binary);
+}
+function fromBase64(value: string) {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+function rowToUser(row: Record<string, unknown>) { return { id: String(row.id), usuario: String(row.usuario), nombre: String(row.nombre), correo: String(row.correo), telefono: String(row.telefono ?? ''), rol: row.rol as RolUsuario, activo: Boolean(row.activo), mustChangePassword: Boolean(row.must_change_password) }; }
 function rowToReport(row: Record<string, unknown>) { const payload = row.payload_json ? JSON.parse(String(row.payload_json)) : {}; return { ...payload, id: row.id, estado: row.estado, version: row.version, fecha: row.fecha, cliente: row.cliente, contacto: row.contacto, correo: row.correo, telefono: row.telefono, ubicacion: row.ubicacion, ordenTrabajo: row.orden_trabajo, solicitadoPor: row.solicitado_por, tipoVisita: row.tipo_visita, horaLlegada: row.hora_llegada, horaSalida: row.hora_salida, trabajoRealizado: row.trabajo_realizado, observaciones: row.observaciones, estadoActual: row.estado_actual, recomendaciones: row.recomendaciones, accionesPendientes: row.acciones_pendientes, proximaVisita: Boolean(row.proxima_visita), fechaSeguimiento: row.fecha_seguimiento, supervisor: row.supervisor, creadoPor: row.creado_por, creadoEn: row.creado_en, actualizadoEn: row.actualizado_en, resumenEquipo: row.resumen_equipo }; }
 async function saveReport(db: D1Database, rs: Record<string, any>, now: string) {
   await db.prepare(`insert into reportes (id, estado, version, fecha, cliente, contacto, correo, telefono, ubicacion, orden_trabajo, solicitado_por, tipo_visita, hora_llegada, hora_salida, trabajo_realizado, observaciones, estado_actual, recomendaciones, acciones_pendientes, proxima_visita, fecha_seguimiento, supervisor, creado_por, creado_en, actualizado_en, resumen_equipo, payload_json) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) on conflict(id) do update set estado=excluded.estado, version=reportes.version+1, fecha=excluded.fecha, cliente=excluded.cliente, contacto=excluded.contacto, correo=excluded.correo, telefono=excluded.telefono, ubicacion=excluded.ubicacion, orden_trabajo=excluded.orden_trabajo, solicitado_por=excluded.solicitado_por, tipo_visita=excluded.tipo_visita, hora_llegada=excluded.hora_llegada, hora_salida=excluded.hora_salida, trabajo_realizado=excluded.trabajo_realizado, observaciones=excluded.observaciones, estado_actual=excluded.estado_actual, recomendaciones=excluded.recomendaciones, acciones_pendientes=excluded.acciones_pendientes, proxima_visita=excluded.proxima_visita, fecha_seguimiento=excluded.fecha_seguimiento, supervisor=excluded.supervisor, actualizado_en=excluded.actualizado_en, resumen_equipo=excluded.resumen_equipo, payload_json=excluded.payload_json`)
     .bind(rs.id, rs.estado, rs.version ?? 1, rs.fecha, rs.cliente ?? '', rs.contacto ?? '', rs.correo ?? '', rs.telefono ?? '', rs.ubicacion ?? '', rs.ordenTrabajo ?? '', rs.solicitadoPor ?? '', rs.tipoVisita ?? '', rs.horaLlegada ?? '', rs.horaSalida ?? '', rs.trabajoRealizado ?? '', rs.observaciones ?? '', rs.estadoActual ?? '', rs.recomendaciones ?? '', rs.accionesPendientes ?? '', rs.proximaVisita ? 1 : 0, rs.fechaSeguimiento ?? '', rs.supervisor ?? '', rs.creadoPor ?? '', rs.creadoEn ?? now, now, rs.resumenEquipo ?? '', JSON.stringify(rs)).run();
 }
-function renderPdfHtml(rs: ReturnType<typeof rowToReport>) {
+async function renderPdfHtml(rs: ReturnType<typeof rowToReport>, env: Env) {
   const equipos = Array.isArray(rs.equipos) ? rs.equipos : [];
   const materiales = Array.isArray(rs.materiales) ? rs.materiales : [];
   const personal = Array.isArray(rs.personal) ? rs.personal : [];
   const evidencias = Array.isArray(rs.evidencias) ? rs.evidencias : [];
+  const fotos = await Promise.all(evidencias.map(async (e: Record<string, unknown>) => ({ ...e, dataUrl: e.blobKey ? await r2ImageDataUrl(env.FILES, String(e.blobKey)) : '' })));
   const row = (label: string, value: unknown) => `<div><span>${esc(label)}</span><strong>${esc(value || 'No registrado')}</strong></div>`;
   const empty = '<p class="muted">No registrado.</p>';
   return `<!doctype html>
@@ -340,6 +423,11 @@ function renderPdfHtml(rs: ReturnType<typeof rowToReport>) {
     td { border-bottom: 1px solid #F1F2F4; padding: 7px 4px; vertical-align: top; }
     .two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     .badge { display: inline-block; border-radius: 999px; background: #FDEDED; color: #C20E1A; padding: 3px 8px; font-weight: 800; margin: 0 4px 4px 0; }
+    .photos { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+    .photo { border: 1px solid #E1E3E7; border-radius: 10px; padding: 7px; break-inside: avoid; }
+    .photo img { display: block; width: 100%; height: 190px; object-fit: cover; border-radius: 7px; background: #F4F5F7; }
+    .photo strong { display: inline-block; margin-top: 6px; color: #C20E1A; }
+    .photo span { display: block; color: #5B6470; }
     .signature { height: 96px; object-fit: contain; max-width: 100%; border: 1px solid #E1E3E7; border-radius: 8px; padding: 6px; }
     footer { margin-top: 14px; border-top: 1px solid #E1E3E7; padding-top: 8px; color: #5B6470; font-size: 9px; display: flex; justify-content: space-between; }
   </style>
@@ -368,7 +456,7 @@ function renderPdfHtml(rs: ReturnType<typeof rowToReport>) {
   <section><h2>Equipos intervenidos</h2>${equipos.length ? `<table><thead><tr><th>Equipo</th><th>Serie</th><th>Ubicación</th><th>Trabajo</th></tr></thead><tbody>${equipos.map((e: Record<string, unknown>) => `<tr><td><strong>${esc(e.nombre)}</strong><br>${esc([e.marca, e.modelo].filter(Boolean).join(' '))}</td><td>${esc(e.serie)}</td><td>${esc(e.ubicacion)}</td><td>${esc(e.trabajoRealizado)}</td></tr>`).join('')}</tbody></table>` : empty}</section>
   <section><h2>Materiales y repuestos</h2>${materiales.length ? `<table><thead><tr><th>Producto</th><th>Cantidad</th><th>Unidad</th><th>Uso</th></tr></thead><tbody>${materiales.map((m: Record<string, unknown>) => `<tr><td>${esc(m.producto)}</td><td>${esc(m.cantidad)}</td><td>${esc(m.unidad)}</td><td>${esc(m.uso)}</td></tr>`).join('')}</tbody></table>` : empty}</section>
   <section><h2>Personal participante</h2>${personal.length ? `<table><thead><tr><th>Nombre</th><th>Rol</th><th>Entrada</th><th>Salida</th></tr></thead><tbody>${personal.map((p: Record<string, unknown>) => `<tr><td>${esc(p.nombre)}</td><td>${esc(p.rol)}</td><td>${esc(p.horaEntrada)}</td><td>${esc(p.horaSalida)}</td></tr>`).join('')}</tbody></table>` : empty}</section>
-  <section><h2>Evidencias fotográficas</h2>${evidencias.length ? evidencias.map((e: Record<string, unknown>) => `<span class="badge">${esc(e.categoria)}</span> ${esc(e.descripcion)}<br>`).join('') : empty}</section>
+  <section><h2>Evidencias fotográficas</h2>${fotos.length ? `<div class="photos">${fotos.map((e: Record<string, unknown>) => `<div class="photo">${e.dataUrl ? `<img src="${esc(e.dataUrl)}" alt="${esc(e.descripcion)}">` : ''}<strong>${esc(e.categoria)}</strong><span>${esc(e.descripcion)}</span></div>`).join('')}</div>` : empty}</section>
   <section><h2>Firma del cliente</h2>${rs.firma ? `<img class="signature" src="${esc(rs.firma.trazo)}"><p><strong>${esc(rs.firma.nombre)}</strong><br>${esc(rs.firma.cargo || '')}<br>${esc(new Date(rs.firma.firmadaEn).toLocaleString('es-HN'))}</p>` : '<p class="muted">Pendiente de firma.</p>'}</section>
   <footer><span>Generado por ${esc(rs.creadoPor || rs.supervisor)}</span><span>${esc(new Date().toLocaleString('es-HN'))}</span></footer>
 </body>
@@ -376,6 +464,14 @@ function renderPdfHtml(rs: ReturnType<typeof rowToReport>) {
 }
 function esc(value: unknown) {
   return String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char] ?? char);
+}
+async function r2ImageDataUrl(bucket: R2Bucket, key: string) {
+  const object = await bucket.get(key);
+  if (!object) return '';
+  const contentType = object.httpMetadata?.contentType || 'image/jpeg';
+  if (!contentType.startsWith('image/')) return '';
+  const bytes = new Uint8Array(await object.arrayBuffer());
+  return `data:${contentType};base64,${base64(bytes)}`;
 }
 
 export default app;

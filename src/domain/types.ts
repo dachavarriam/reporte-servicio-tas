@@ -20,7 +20,7 @@ export interface ReporteServicio {
   firma?: Firma; supervisor: string; creadoPor: string; creadoEn: string; actualizadoEn: string; resumenEquipo?: string;
 }
 
-export interface Usuario { id: string; usuario: string; nombre: string; correo: string; telefono: string; rol: RolUsuario; activo: boolean }
+export interface Usuario { id: string; usuario: string; nombre: string; correo: string; telefono: string; rol: RolUsuario; activo: boolean; mustChangePassword?: boolean }
 export interface Cliente { id: string; nombre: string; contacto: string; correo: string; telefono: string; ubicacionDefault?: string }
 export interface Metrics { total: number; borradores: number; revision: number; pendientesFirma: number; completados: number; tiempoPromedioDias: number }
 

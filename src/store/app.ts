@@ -1,11 +1,11 @@
 import { create } from 'zustand';
 import type { Metrics, ReporteServicio, Usuario } from '../domain/types';
 import { reports } from '../data/repository';
-import { DEMO_PASSWORD, DEMO_USER } from '../data/seed';
+import { jsonHeaders } from '../data/api';
 
 interface AppState {
   user: Usuario | null; items: ReporteServicio[]; metrics: Metrics | null; loading: boolean; online: boolean;
-  toast: string; login(usuario: string, password: string): Promise<boolean>; logout(): void; load(): Promise<void>; notify(message: string): void;
+  toast: string; login(usuario: string, password: string): Promise<boolean>; changePassword(currentPassword: string, newPassword: string): Promise<boolean>; logout(): void; load(): Promise<void>; notify(message: string): void;
 }
 
 export const useApp = create<AppState>((set, get) => ({
@@ -17,9 +17,22 @@ export const useApp = create<AppState>((set, get) => ({
       const data = await res.json() as { user: Usuario; token: string };
       sessionStorage.setItem('rs-user', JSON.stringify(data.user)); sessionStorage.setItem('rs-token', data.token); set({ user: data.user }); return true;
     } catch {
-      const ok = usuario.toLowerCase() === DEMO_USER.usuario && password === DEMO_PASSWORD;
-      if (ok) { sessionStorage.setItem('rs-user', JSON.stringify(DEMO_USER)); set({ user: DEMO_USER }); }
-      return ok;
+      return false;
+    }
+  },
+  async changePassword(currentPassword, newPassword) {
+    try {
+      const res = await fetch('/api/auth/change-password', { method: 'POST', headers: jsonHeaders(), body: JSON.stringify({ currentPassword, newPassword }) });
+      if (!res.ok) throw new Error('invalid');
+      const user = get().user;
+      if (user) {
+        const updated = { ...user, mustChangePassword: false };
+        sessionStorage.setItem('rs-user', JSON.stringify(updated));
+        set({ user: updated });
+      }
+      return true;
+    } catch {
+      return false;
     }
   },
   logout() { sessionStorage.removeItem('rs-user'); sessionStorage.removeItem('rs-token'); set({ user: null }); },

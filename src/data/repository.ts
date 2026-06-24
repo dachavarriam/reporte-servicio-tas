@@ -65,7 +65,14 @@ export class RemoteReportRepository implements ReportRepository {
     return this.request<{ items: ReporteServicio[]; total: number }>(`/api/reportes?${params}`);
   }
   async get(id: string) { try { return await this.request<ReporteServicio>(`/api/reportes/${encodeURIComponent(id)}`); } catch { return null; } }
-  async timeline(id: string) { return this.local.timeline(id); }
+  async timeline(id: string) {
+    try {
+      const data = await this.request<{ items: TimelineEvento[] }>(`/api/reportes/${encodeURIComponent(id)}/timeline`);
+      return data.items;
+    } catch {
+      return this.local.timeline(id);
+    }
+  }
   async createDraft(partial: Partial<ReporteServicio> = {}) {
     return this.request<ReporteServicio>('/api/reportes', { method: 'POST', body: JSON.stringify(partial) });
   }
