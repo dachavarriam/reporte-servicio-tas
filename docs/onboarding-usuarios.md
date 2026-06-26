@@ -6,10 +6,9 @@ Actualizado: 2026-06-24
 
 Cuando el admin crea un usuario, el usuario debe recibir:
 
-- URL de acceso.
+- Link de activación.
 - Usuario.
-- Contraseña temporal.
-- Instrucción de cambiar contraseña al primer ingreso.
+- Instrucción para definir su contraseña.
 - Resumen del flujo de trabajo.
 - Reglas básicas de seguridad.
 - Contacto de soporte interno.
@@ -23,8 +22,9 @@ La forma más rápida es usar n8n para enviar el correo de bienvenida cuando se 
 Flujo recomendado:
 
 1. Admin crea usuario en `rs.tashonduras.com`.
-2. La app dispara un webhook a n8n con los datos del usuario.
-3. n8n envía el correo usando Gmail, SMTP, Microsoft 365 o el proveedor que ya usen.
+2. La app genera un token de invitación con expiración.
+3. La app dispara un webhook a n8n con los datos del usuario y el link de activación.
+4. n8n envía el correo usando Gmail, SMTP, Microsoft 365 o el proveedor que ya usen.
 4. n8n responde a la app si el correo fue enviado o falló.
 
 Ventaja:
@@ -35,8 +35,8 @@ Ventaja:
 
 Dato importante:
 
-- No conviene enviar contraseñas definitivas por correo.
-- Si se envía contraseña temporal, debe forzar cambio en el primer login, como ya hace la plataforma.
+- No se envía contraseña por correo.
+- El usuario define su contraseña desde el link de activación.
 
 ### Opción Directa En Cloudflare
 
@@ -53,7 +53,15 @@ Esta opción es más limpia a largo plazo, pero requiere configuración del domi
 
 ## Payload Sugerido Para n8n
 
-Endpoint futuro sugerido:
+Endpoint implementado para carga masiva:
+
+`POST /api/usuarios/bulk`
+
+Webhook n8n configurado:
+
+`POST https://n8n.wembla.com/webhook/nuevo-usuario-rs`
+
+Endpoint futuro sugerido para reenvio manual:
 
 `POST /api/usuarios/:id/invitar`
 
@@ -146,4 +154,3 @@ Antes de automatizar el correo, definir:
 - Proveedor: n8n/SMTP o Cloudflare Email Sending.
 - Si la contraseña temporal se envía en el mismo correo o por canal separado.
 - Si se agregará botón `Enviar invitación` para reenvío manual.
-

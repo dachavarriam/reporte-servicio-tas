@@ -11,7 +11,7 @@ export const clientes: Cliente[] = [
 
 const now = '2026-06-22T16:30:00.000Z';
 const base = (id: string, cliente: string, ubicacion: string, tipoVisita: ReporteServicio['tipoVisita'], fecha: string, supervisor: string, estado: ReporteServicio['estado'], ordenTrabajo: string, resumenEquipo: string): ReporteServicio => ({
-  id, cliente, ubicacion, tipoVisita, fecha, supervisor, estado, ordenTrabajo, resumenEquipo, version: 1,
+  id, cliente, ciudad: ubicacion === 'Tegucigalpa' ? 'Tegucigalpa' : 'San Pedro Sula', ubicacion, tipoVisita, fecha, supervisor, estado, ordenTrabajo, resumenEquipo, version: 1,
   contacto: '', correo: '', telefono: '', solicitadoPor: '', horaLlegada: '09:00', horaSalida: '12:30',
   trabajoRealizado: '', observaciones: '', estadoActual: 'Operativo', recomendaciones: '', accionesPendientes: '',
   proximaVisita: false, equipos: [], materiales: [], personal: [], evidencias: [], creadoPor: supervisor, creadoEn: now, actualizadoEn: now

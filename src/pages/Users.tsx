@@ -28,11 +28,14 @@ export function UsersPage() {
       correo: String(fd.get('correo')).trim(),
       telefono: String(fd.get('telefono')).trim(),
       rol: String(fd.get('rol')) as RolUsuario,
-      password: String(fd.get('password'))
+      enviarInvitacion: true
     };
     const res = await fetch('/api/usuarios', { method: 'POST', headers: jsonHeaders(), body: JSON.stringify(payload) });
     if (!res.ok) { notify('No se pudo crear el usuario'); return; }
-    form.reset(); notify('Usuario creado'); await load();
+    const data = await res.json() as { invite?: { sent?: boolean; inviteUrl?: string } };
+    form.reset();
+    notify(data.invite?.sent ? 'Usuario creado e invitación enviada' : 'Usuario creado; revise n8n');
+    await load();
   }
 
   async function toggleUser(user: Usuario) {
@@ -61,8 +64,8 @@ export function UsersPage() {
         <Field label="Correo" required><Input name="correo" type="email" placeholder="jmedina@tashonduras.com" required /></Field>
         <Field label="Teléfono"><Input name="telefono" placeholder="+504 ..." /></Field>
         <Field label="Rol" required><Select name="rol" required>{roles.map(role => <option key={role} value={role}>{role}</option>)}</Select></Field>
-        <Field label="Contraseña temporal" required><Input name="password" type="password" minLength={8} placeholder="Mínimo 8 caracteres" required /></Field>
-        <div className="span-2"><Button type="submit">Crear usuario</Button></div>
+        <div className="span-2"><p className="muted">El sistema enviará una invitación por correo para que el usuario defina su contraseña.</p></div>
+        <div className="span-2"><Button type="submit">Crear usuario y enviar invitación</Button></div>
       </form>
     </section>
     <section className="detail-section">

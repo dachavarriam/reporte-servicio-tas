@@ -17,6 +17,7 @@ La plataforma ya está funcional para piloto operativo:
 - Firma real de cliente.
 - Metadata de firma: fecha/hora, IP, user agent y ubicación si el navegador lo permite.
 - Envío a n8n con callback.
+- Ciudad del RS para ruteo de canal: Tegucigalpa o San Pedro Sula.
 - Dominio `rs.tashonduras.com`.
 - D1 `rs-tas`.
 - R2 `tashub/reportes`.
@@ -33,6 +34,7 @@ La plataforma ya está funcional para piloto operativo:
    - Export programado de D1.
    - Copia programada o manual de R2 `reportes/`.
    - Documentar recuperación.
+   - Definir destino principal: OneDrive/SharePoint, bucket R2 separado o repositorio privado de backups.
 
 3. Historial avanzado de cliente.
    - Vista tipo timeline.
@@ -109,4 +111,3 @@ Para declarar V1.0 lista:
 6. Documentar soporte interno.
 
 Con eso se puede usar formalmente, dejando historial avanzado, Odoo y videos como siguientes fases.
-

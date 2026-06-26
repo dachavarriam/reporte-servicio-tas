@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import type { RolUsuario } from '../src/domain/types';
 
-type Env = { DB: D1Database; FILES: R2Bucket; BROWSER: BrowserRun; APP_ORIGIN: string; N8N_WEBHOOK_URL: string; N8N_CALLBACK_SECRET?: string; R2_PREFIX: string; ODOO_URL?: string; ODOO_DB?: string; ODOO_USER?: string; ODOO_API_KEY?: string; ODOO_PASSWORD?: string; ASSETS: Fetcher };
+type Env = { DB: D1Database; FILES: R2Bucket; BROWSER: BrowserRun; APP_ORIGIN: string; N8N_WEBHOOK_URL: string; N8N_USER_WEBHOOK_URL?: string; N8N_CALLBACK_SECRET?: string; R2_PREFIX: string; ODOO_URL?: string; ODOO_DB?: string; ODOO_USER?: string; ODOO_API_KEY?: string; ODOO_PASSWORD?: string; ASSETS: Fetcher };
 const app = new Hono<{ Bindings: Env }>();
 app.use('/api/*', async (c, next) => cors({ origin: c.env.APP_ORIGIN, credentials: true })(c, next));
 
@@ -39,6 +39,24 @@ app.post('/api/auth/change-password', async c => {
   await c.env.DB.prepare('update usuarios set password_hash = ?, must_change_password = 0 where id = ?').bind(await hashPassword(body.newPassword), row.id).run();
   await c.env.DB.prepare('delete from sesiones where usuario_id = ? and token <> ?').bind(row.id, token).run();
   return c.json({ ok: true });
+});
+
+app.get('/api/invitaciones/:token', async c => {
+  const invite = await findInvite(c.env.DB, c.req.param('token'));
+  if (!invite) return c.json({ error: 'invalid_invitation' }, 404);
+  return c.json({ usuario: invite.usuario, nombre: invite.nombre, correo: invite.correo, rol: invite.rol, expiraEn: invite.expira_en });
+});
+
+app.post('/api/invitaciones/:token/aceptar', async c => {
+  const invite = await findInvite(c.env.DB, c.req.param('token'));
+  if (!invite) return c.json({ error: 'invalid_invitation' }, 404);
+  const body = await c.req.json<{ password: string }>();
+  if (!body.password || body.password.length < 10) return c.json({ error: 'weak_password' }, 400);
+  const now = new Date().toISOString();
+  await c.env.DB.prepare('update usuarios set password_hash = ?, must_change_password = 0, activo = 1 where id = ?').bind(await hashPassword(body.password), invite.usuario_id).run();
+  await c.env.DB.prepare('update invitaciones set estado = ?, usado_en = ? where id = ?').bind('usada', now, invite.id).run();
+  await c.env.DB.prepare('delete from sesiones where usuario_id = ?').bind(invite.usuario_id).run();
+  return c.json({ ok: true, usuario: invite.usuario });
 });
 
 app.get('/api/odoo/clientes', async c => {
@@ -110,12 +128,40 @@ app.get('/api/usuarios', async c => {
 
 app.post('/api/usuarios', async c => {
   const user = await requireUser(c, 'admin'); if (!user) return c.json({ error: 'unauthorized' }, 401);
-  const body = await c.req.json<{ usuario: string; nombre: string; correo: string; telefono?: string; rol: RolUsuario; password: string }>();
-  if (!body.usuario || !body.nombre || !body.correo || !body.rol || !body.password) return c.json({ error: 'missing_fields' }, 400);
-  const id = crypto.randomUUID(); const now = new Date().toISOString(); const hash = await hashPassword(body.password);
+  const body = await c.req.json<{ usuario: string; nombre: string; correo: string; telefono?: string; rol: RolUsuario; password?: string; enviarInvitacion?: boolean }>();
+  if (!body.usuario || !body.nombre || !body.correo || !body.rol) return c.json({ error: 'missing_fields' }, 400);
+  const id = crypto.randomUUID(); const now = new Date().toISOString(); const password = body.password?.trim() || generateTempPassword(); const hash = await hashPassword(password);
+  const created = { id, usuario: body.usuario.trim().toLowerCase(), nombre: body.nombre.trim(), correo: body.correo.trim().toLowerCase(), telefono: body.telefono ?? '', rol: body.rol, activo: true };
   await c.env.DB.prepare('insert into usuarios (id, usuario, nombre, correo, telefono, rol, activo, password_hash, must_change_password, creado_en) values (?, ?, ?, ?, ?, ?, 1, ?, 1, ?)')
-    .bind(id, body.usuario.trim().toLowerCase(), body.nombre.trim(), body.correo.trim().toLowerCase(), body.telefono ?? '', body.rol, hash, now).run();
-  return c.json({ ok: true, user: { id, usuario: body.usuario.trim().toLowerCase(), nombre: body.nombre.trim(), correo: body.correo.trim().toLowerCase(), telefono: body.telefono ?? '', rol: body.rol, activo: true } }, 201);
+    .bind(created.id, created.usuario, created.nombre, created.correo, created.telefono, created.rol, hash, now).run();
+  const invite = body.enviarInvitacion === false ? { sent: false, skipped: true } : await createAndSendInvite(c.env, created, user.nombre);
+  return c.json({ ok: true, user: created, invite }, 201);
+});
+
+app.post('/api/usuarios/bulk', async c => {
+  const admin = await requireUser(c, 'admin'); if (!admin) return c.json({ error: 'unauthorized' }, 401);
+  const body = await c.req.json<{ users: Array<{ usuario: string; nombre: string; correo: string; telefono?: string; rol?: RolUsuario; password?: string }>; enviarInvitacion?: boolean }>();
+  if (!Array.isArray(body.users) || body.users.length === 0) return c.json({ error: 'missing_users' }, 400);
+  if (body.users.length > 100) return c.json({ error: 'too_many_users', limit: 100 }, 400);
+  const results = [];
+  for (const input of body.users) {
+    try {
+      const usuario = input.usuario?.trim().toLowerCase();
+      const nombre = input.nombre?.trim();
+      const correo = input.correo?.trim().toLowerCase();
+      const rol = input.rol || 'supervisor';
+      if (!usuario || !nombre || !correo || !['admin', 'supervisor'].includes(rol)) throw new Error('missing_or_invalid_fields');
+      const id = crypto.randomUUID(); const now = new Date().toISOString(); const password = input.password?.trim() || generateTempPassword();
+      const created = { id, usuario, nombre, correo, telefono: input.telefono?.trim() || '', rol: rol as RolUsuario, activo: true };
+      await c.env.DB.prepare('insert into usuarios (id, usuario, nombre, correo, telefono, rol, activo, password_hash, must_change_password, creado_en) values (?, ?, ?, ?, ?, ?, 1, ?, 1, ?)')
+        .bind(created.id, created.usuario, created.nombre, created.correo, created.telefono, created.rol, await hashPassword(password), now).run();
+      const invite = body.enviarInvitacion === false ? { sent: false, skipped: true } : await createAndSendInvite(c.env, created, admin.nombre);
+      results.push({ ok: true, usuario, correo, invite });
+    } catch (error) {
+      results.push({ ok: false, usuario: input.usuario ?? '', correo: input.correo ?? '', error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  return c.json({ ok: true, created: results.filter(x => x.ok).length, failed: results.filter(x => !x.ok).length, results });
 });
 
 app.put('/api/usuarios/:id', async c => {
@@ -158,7 +204,7 @@ app.post('/api/reportes', async c => {
   const now = new Date().toISOString(); const year = new Date().getFullYear();
   const last = await c.env.DB.prepare('select id from reportes where id like ? order by id desc limit 1').bind(`RS-${year}-%`).first<{ id: string }>();
   const next = Number(last?.id?.match(/(\d{5})$/)?.[1] ?? 0) + 1;
-  const rs = { id: `RS-${year}-${String(next).padStart(5, '0')}`, estado: 'Borrador', version: 1, fecha: now.slice(0, 10), cliente: '', contacto: '', correo: '', telefono: '', ubicacion: '', solicitadoPor: '', tipoVisita: 'Mantenimiento', horaLlegada: '', horaSalida: '', trabajoRealizado: '', observaciones: '', estadoActual: 'Operativo', recomendaciones: '', accionesPendientes: '', proximaVisita: false, equipos: [], materiales: [], personal: [], evidencias: [], supervisor: user.nombre, creadoPor: user.nombre, creadoEn: now, actualizadoEn: now, ...body };
+  const rs = { id: `RS-${year}-${String(next).padStart(5, '0')}`, estado: 'Borrador', version: 1, fecha: now.slice(0, 10), cliente: '', contacto: '', correo: '', telefono: '', ciudad: 'San Pedro Sula', ubicacion: '', solicitadoPor: '', tipoVisita: 'Mantenimiento', horaLlegada: '', horaSalida: '', trabajoRealizado: '', observaciones: '', estadoActual: 'Operativo', recomendaciones: '', accionesPendientes: '', proximaVisita: false, equipos: [], materiales: [], personal: [], evidencias: [], supervisor: user.nombre, creadoPor: user.nombre, creadoEn: now, actualizadoEn: now, ...body };
   rs.id = `RS-${year}-${String(next).padStart(5, '0')}`;
   rs.estado = 'Borrador';
   rs.version = 1;
@@ -288,7 +334,7 @@ app.post('/api/reportes/:id/enviar', async c => {
   await c.env.DB.prepare('insert into entregas (id, reporte_id, destinatario, estado, creado_en) values (?, ?, ?, ?, ?)').bind(id, c.req.param('id'), body.destinatario, 'pendiente', now).run();
   await c.env.DB.prepare('insert into timeline (id, reporte_id, tipo, actor, nota, creado_en) values (?, ?, ?, ?, ?, ?)')
     .bind(crypto.randomUUID(), c.req.param('id'), 'envio_pendiente', user.nombre, body.destinatario, now).run();
-  if (c.env.N8N_WEBHOOK_URL) await fetch(c.env.N8N_WEBHOOK_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ deliveryId: id, reporteId: c.req.param('id'), destinatario: body.destinatario, pdfKey: body.pdfKey, callbackUrl: `${new URL(c.req.url).origin}/api/entregas/${id}/estado`, cliente: { nombre: rs.cliente, contacto: rs.contacto, correo: rs.correo, telefono: rs.telefono, ubicacion: rs.ubicacion }, reporte: { id: rs.id, fecha: rs.fecha, tipoVisita: rs.tipoVisita, supervisor: rs.supervisor, trabajoRealizado: rs.trabajoRealizado, observaciones: rs.observaciones } }) });
+  if (c.env.N8N_WEBHOOK_URL) await fetch(c.env.N8N_WEBHOOK_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ deliveryId: id, reporteId: c.req.param('id'), destinatario: body.destinatario, pdfKey: body.pdfKey, callbackUrl: `${new URL(c.req.url).origin}/api/entregas/${id}/estado`, ciudad: rs.ciudad || '', canal: cityChannel(rs.ciudad), cliente: { nombre: rs.cliente, contacto: rs.contacto, correo: rs.correo, telefono: rs.telefono, ciudad: rs.ciudad || '', ubicacion: rs.ubicacion }, reporte: { id: rs.id, fecha: rs.fecha, tipoVisita: rs.tipoVisita, supervisor: rs.supervisor, ciudad: rs.ciudad || '', trabajoRealizado: rs.trabajoRealizado, observaciones: rs.observaciones } }) });
   return c.json({ ok: true, deliveryId: id });
 });
 
@@ -338,6 +384,60 @@ async function requireUser(c: { req: { header(name: string): string | undefined 
 function canAccessReport(user: ReturnType<typeof rowToUser>, row: Record<string, unknown>) {
   return user.rol === 'admin' || String(row.supervisor ?? '') === user.nombre || String(row.creado_por ?? row.creadoPor ?? '') === user.nombre;
 }
+async function createAndSendInvite(env: Env, usuario: { id: string; usuario: string; nombre: string; correo: string; telefono: string; rol: RolUsuario }, creadoPor: string) {
+  const token = generateInviteToken();
+  const now = new Date();
+  const expires = new Date(now.getTime() + 1000 * 60 * 60 * 72);
+  await env.DB.prepare('update invitaciones set estado = ? where usuario_id = ? and estado = ?').bind('revocada', usuario.id, 'pendiente').run();
+  await env.DB.prepare('insert into invitaciones (id, usuario_id, token_hash, estado, creado_por, creado_en, expira_en) values (?, ?, ?, ?, ?, ?, ?)')
+    .bind(crypto.randomUUID(), usuario.id, await sha256(token), 'pendiente', creadoPor, now.toISOString(), expires.toISOString()).run();
+  const inviteUrl = `${env.APP_ORIGIN || 'https://rs.tashonduras.com'}/invitar/${encodeURIComponent(token)}`;
+  const sent = await sendUserInvite(env, usuario, inviteUrl, expires.toISOString(), creadoPor);
+  return { ...sent, inviteUrl, expiraEn: expires.toISOString() };
+}
+async function sendUserInvite(env: Env, usuario: { id: string; usuario: string; nombre: string; correo: string; telefono: string; rol: RolUsuario }, inviteUrl: string, expiraEn: string, creadoPor: string) {
+  if (!env.N8N_USER_WEBHOOK_URL) return { sent: false, skipped: true };
+  try {
+    const res = await fetch(env.N8N_USER_WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        tipo: 'usuario_creado',
+        creadoPor,
+        usuario: {
+          id: usuario.id,
+          usuario: usuario.usuario,
+          nombre: usuario.nombre,
+          correo: usuario.correo,
+          telefono: usuario.telefono,
+          rol: usuario.rol,
+          mustChangePassword: false
+        },
+        app: {
+          nombre: 'Reportes de Servicio TAS',
+          url: env.APP_ORIGIN || 'https://rs.tashonduras.com',
+          loginUrl: env.APP_ORIGIN || 'https://rs.tashonduras.com',
+          inviteUrl,
+          expiraEn
+        },
+        mensaje: {
+          asunto: 'Active su acceso a Reportes de Servicio TAS',
+          soporte: 'Administrador de la plataforma RS TAS'
+        }
+      })
+    });
+    return { sent: res.ok, status: res.status };
+  } catch (error) {
+    return { sent: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+async function findInvite(db: D1Database, token: string) {
+  if (!token || token.length < 20) return null;
+  return db.prepare(`select i.id, i.usuario_id, i.expira_en, u.usuario, u.nombre, u.correo, u.rol
+    from invitaciones i join usuarios u on u.id = i.usuario_id
+    where i.token_hash = ? and i.estado = ? and i.expira_en > ? and u.activo = 1`)
+    .bind(await sha256(token), 'pendiente', new Date().toISOString()).first<Record<string, string>>();
+}
 async function odooExecute(env: Env, model: string, method: string, args: unknown[] = [], kwargs: Record<string, unknown> = {}) {
   if (!env.ODOO_URL || !env.ODOO_DB || !env.ODOO_USER || !(env.ODOO_API_KEY || env.ODOO_PASSWORD)) throw new Error('odoo_not_configured');
   const password = env.ODOO_API_KEY || env.ODOO_PASSWORD;
@@ -357,6 +457,12 @@ async function odooRpc<T>(baseUrl: string, service: string, method: string, args
   return data.result as T;
 }
 function cleanOdoo(value: unknown) { return value && value !== false ? String(value) : ''; }
+function cityChannel(ciudad: unknown) {
+  const value = String(ciudad ?? '').toLowerCase();
+  if (value.includes('tegucigalpa')) return 'tegucigalpa';
+  if (value.includes('san pedro')) return 'san-pedro-sula';
+  return 'general';
+}
 async function sha256(value: string) { const data = new TextEncoder().encode(value); const digest = await crypto.subtle.digest('SHA-256', data); return [...new Uint8Array(digest)].map(x => x.toString(16).padStart(2, '0')).join(''); }
 async function hashPassword(password: string) {
   const salt = crypto.getRandomValues(new Uint8Array(16));
@@ -364,6 +470,19 @@ async function hashPassword(password: string) {
   const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits']);
   const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations }, key, 256);
   return `pbkdf2$sha256$${iterations}$${base64(salt)}$${base64(new Uint8Array(bits))}`;
+}
+function generateTempPassword() {
+  const bytes = new Uint8Array(12);
+  crypto.getRandomValues(bytes);
+  return `RS-${[...bytes].map(x => x.toString(36).padStart(2, '0')).join('').slice(0, 14)}`;
+}
+function generateInviteToken() {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return base64url(bytes);
+}
+function base64url(bytes: Uint8Array) {
+  return base64(bytes).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
 }
 async function verifyPassword(password: string, stored: string) {
   if (/^[a-f0-9]{64}$/i.test(stored)) return { ok: await safeEqual(await sha256(password), stored), needsUpgrade: true };
@@ -406,7 +525,7 @@ function fromBase64(value: string) {
   return bytes;
 }
 function rowToUser(row: Record<string, unknown>) { return { id: String(row.id), usuario: String(row.usuario), nombre: String(row.nombre), correo: String(row.correo), telefono: String(row.telefono ?? ''), rol: row.rol as RolUsuario, activo: Boolean(row.activo), mustChangePassword: Boolean(row.must_change_password) }; }
-function rowToReport(row: Record<string, unknown>) { const payload = row.payload_json ? JSON.parse(String(row.payload_json)) : {}; return { ...payload, id: row.id, estado: row.estado, version: row.version, fecha: row.fecha, cliente: row.cliente, contacto: row.contacto, correo: row.correo, telefono: row.telefono, ubicacion: row.ubicacion, ordenTrabajo: row.orden_trabajo, solicitadoPor: row.solicitado_por, tipoVisita: row.tipo_visita, horaLlegada: row.hora_llegada, horaSalida: row.hora_salida, trabajoRealizado: row.trabajo_realizado, observaciones: row.observaciones, estadoActual: row.estado_actual, recomendaciones: row.recomendaciones, accionesPendientes: row.acciones_pendientes, proximaVisita: Boolean(row.proxima_visita), fechaSeguimiento: row.fecha_seguimiento, supervisor: row.supervisor, creadoPor: row.creado_por, creadoEn: row.creado_en, actualizadoEn: row.actualizado_en, resumenEquipo: row.resumen_equipo }; }
+function rowToReport(row: Record<string, unknown>) { const payload = row.payload_json ? JSON.parse(String(row.payload_json)) : {}; return { ...payload, id: row.id, estado: row.estado, version: row.version, fecha: row.fecha, cliente: row.cliente, contacto: row.contacto, correo: row.correo, telefono: row.telefono, ciudad: payload.ciudad ?? '', ubicacion: row.ubicacion, ordenTrabajo: row.orden_trabajo, solicitadoPor: row.solicitado_por, tipoVisita: row.tipo_visita, horaLlegada: row.hora_llegada, horaSalida: row.hora_salida, trabajoRealizado: row.trabajo_realizado, observaciones: row.observaciones, estadoActual: row.estado_actual, recomendaciones: row.recomendaciones, accionesPendientes: row.acciones_pendientes, proximaVisita: Boolean(row.proxima_visita), fechaSeguimiento: row.fecha_seguimiento, supervisor: row.supervisor, creadoPor: row.creado_por, creadoEn: row.creado_en, actualizadoEn: row.actualizado_en, resumenEquipo: row.resumen_equipo }; }
 async function saveReport(db: D1Database, rs: Record<string, any>, now: string) {
   await db.prepare(`insert into reportes (id, estado, version, fecha, cliente, contacto, correo, telefono, ubicacion, orden_trabajo, solicitado_por, tipo_visita, hora_llegada, hora_salida, trabajo_realizado, observaciones, estado_actual, recomendaciones, acciones_pendientes, proxima_visita, fecha_seguimiento, supervisor, creado_por, creado_en, actualizado_en, resumen_equipo, payload_json) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) on conflict(id) do update set estado=excluded.estado, version=reportes.version+1, fecha=excluded.fecha, cliente=excluded.cliente, contacto=excluded.contacto, correo=excluded.correo, telefono=excluded.telefono, ubicacion=excluded.ubicacion, orden_trabajo=excluded.orden_trabajo, solicitado_por=excluded.solicitado_por, tipo_visita=excluded.tipo_visita, hora_llegada=excluded.hora_llegada, hora_salida=excluded.hora_salida, trabajo_realizado=excluded.trabajo_realizado, observaciones=excluded.observaciones, estado_actual=excluded.estado_actual, recomendaciones=excluded.recomendaciones, acciones_pendientes=excluded.acciones_pendientes, proxima_visita=excluded.proxima_visita, fecha_seguimiento=excluded.fecha_seguimiento, supervisor=excluded.supervisor, actualizado_en=excluded.actualizado_en, resumen_equipo=excluded.resumen_equipo, payload_json=excluded.payload_json`)
     .bind(rs.id, rs.estado, rs.version ?? 1, rs.fecha, rs.cliente ?? '', rs.contacto ?? '', rs.correo ?? '', rs.telefono ?? '', rs.ubicacion ?? '', rs.ordenTrabajo ?? '', rs.solicitadoPor ?? '', rs.tipoVisita ?? '', rs.horaLlegada ?? '', rs.horaSalida ?? '', rs.trabajoRealizado ?? '', rs.observaciones ?? '', rs.estadoActual ?? '', rs.recomendaciones ?? '', rs.accionesPendientes ?? '', rs.proximaVisita ? 1 : 0, rs.fechaSeguimiento ?? '', rs.supervisor ?? '', rs.creadoPor ?? '', rs.creadoEn ?? now, now, rs.resumenEquipo ?? '', JSON.stringify(rs)).run();
@@ -511,8 +630,9 @@ async function renderPdfHtml(rs: ReturnType<typeof rowToReport>, env: Env) {
   <div class="info-box">
     <table class="info-table">
       <tr>${infoCell('Cliente', rs.cliente)}${infoCell('Contacto', rs.contacto)}${infoCell('Fecha', rs.fecha)}${infoCell('Tipo', rs.tipoVisita)}</tr>
-      <tr>${infoCell('Ubicación', rs.ubicacion)}${infoCell('Correo', rs.correo)}${infoCell('Supervisor', rs.supervisor)}${infoCell('OT', rs.ordenTrabajo)}</tr>
-      <tr>${infoCell('Teléfono', rs.telefono)}${infoCell('Llegada', rs.horaLlegada)}${infoCell('Salida', rs.horaSalida)}<td><strong>Próxima visita:</strong><p>${yesNo(rs.proximaVisita)}</p></td></tr>
+      <tr>${infoCell('Ciudad', rs.ciudad || '-')}${infoCell('Ubicación', rs.ubicacion)}${infoCell('Correo', rs.correo)}${infoCell('Supervisor', rs.supervisor)}</tr>
+      <tr>${infoCell('OT', rs.ordenTrabajo)}${infoCell('Llegada', rs.horaLlegada)}${infoCell('Salida', rs.horaSalida)}${infoCell('Canal', cityChannel(rs.ciudad))}</tr>
+      <tr>${infoCell('Teléfono', rs.telefono)}${infoCell('Solicitado por', rs.solicitadoPor)}${infoCell('Seguimiento', rs.fechaSeguimiento || '-') }<td><strong>Próxima visita:</strong><p>${yesNo(rs.proximaVisita)}</p></td></tr>
     </table>
   </div>
 

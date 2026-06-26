@@ -8,6 +8,6 @@
   "d1_databases": [{ "binding": "DB", "database_name": "rs-tas", "database_id": "f0a74c85-7209-4f16-afca-b9ca17f7800c", "migrations_dir": "migrations" }],
   "r2_buckets": [{ "binding": "FILES", "bucket_name": "tashub" }],
   "browser": { "binding": "BROWSER" },
-  "vars": { "APP_ORIGIN": "https://rs.tashonduras.com", "N8N_WEBHOOK_URL": "https://n8n.wembla.com/webhook/rs-pdf", "R2_PREFIX": "reportes" },
+  "vars": { "APP_ORIGIN": "https://rs.tashonduras.com", "N8N_WEBHOOK_URL": "https://n8n.wembla.com/webhook/rs-pdf", "N8N_USER_WEBHOOK_URL": "https://n8n.wembla.com/webhook/nuevo-usuario-rs", "R2_PREFIX": "reportes" },
   "observability": { "enabled": true }
 }

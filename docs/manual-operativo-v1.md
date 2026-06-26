@@ -69,6 +69,7 @@ Campos obligatorios:
 - Fecha.
 - Cliente.
 - Correo del cliente.
+- Ciudad: Tegucigalpa o San Pedro Sula.
 - Tipo de visita.
 - Hora de llegada.
 - Hora de salida.
@@ -149,4 +150,4 @@ n8n debe encargarse de:
 - Revisar el PDF antes de enviarlo cuando sea un cliente nuevo o un servicio especial.
 - Si falla el envío, volver a tocar `Enviar`.
 - Si no hay buena señal, guardar el RS y terminar el envío cuando haya conexión estable.
-
+- Seleccionar correctamente la ciudad porque define el canal de envío en n8n.

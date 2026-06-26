@@ -2,6 +2,7 @@ export type EstadoRS = 'Borrador' | 'En revisión' | 'Finalizado sin firma' | 'P
 export type TipoVisita = 'Instalación' | 'Soporte' | 'Mantenimiento' | 'Reparación' | 'Capacitación' | 'Estudio técnico' | 'Inspección' | 'Otro';
 export type RolUsuario = 'admin' | 'supervisor' | 'tecnico';
 export type CategoriaFoto = 'Antes' | 'Durante' | 'Después';
+export type CiudadRS = 'Tegucigalpa' | 'San Pedro Sula';
 
 export interface Equipo { id: string; nombre: string; marca: string; modelo: string; serie: string; ubicacion: string; estadoInicial: string; estadoFinal: string; trabajoRealizado: string; recomendacion: string }
 export interface Material { id: string; producto: string; cantidad: string; unidad: string; serieLote?: string; uso: 'Instalado' | 'Utilizado' | 'Entregado' }
@@ -12,7 +13,7 @@ export interface TimelineEvento { id: string; rsId: string; tipo: string; actor:
 
 export interface ReporteServicio {
   id: string; estado: EstadoRS; version: number; fecha: string; clienteId?: string; cliente: string;
-  contacto: string; correo: string; telefono: string; ubicacion: string; ordenTrabajo?: string;
+  contacto: string; correo: string; telefono: string; ciudad: CiudadRS; ubicacion: string; ordenTrabajo?: string;
   solicitadoPor: string; tipoVisita: TipoVisita; horaLlegada: string; horaSalida: string;
   trabajoRealizado: string; observaciones: string; estadoActual: string; recomendaciones: string;
   accionesPendientes: string; proximaVisita: boolean; fechaSeguimiento?: string;
@@ -34,4 +35,5 @@ export const ESTADO_META: Record<EstadoRS, { bg: string; fg: string; dot: string
 };
 
 export const TIPOS_VISITA: TipoVisita[] = ['Instalación', 'Soporte', 'Mantenimiento', 'Reparación', 'Capacitación', 'Estudio técnico', 'Inspección', 'Otro'];
+export const CIUDADES_RS: CiudadRS[] = ['Tegucigalpa', 'San Pedro Sula'];
 export const uid = () => crypto.randomUUID();
