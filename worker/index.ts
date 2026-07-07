@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import type { RolUsuario } from '../src/domain/types';
 
-type Env = { DB: D1Database; FILES: R2Bucket; BROWSER: BrowserRun; APP_ORIGIN: string; N8N_WEBHOOK_URL: string; N8N_USER_WEBHOOK_URL?: string; N8N_CALLBACK_SECRET?: string; R2_PREFIX: string; ODOO_URL?: string; ODOO_DB?: string; ODOO_USER?: string; ODOO_API_KEY?: string; ODOO_PASSWORD?: string; ASSETS: Fetcher };
+type Env = { DB: D1Database; FILES: R2Bucket; BROWSER: BrowserRun; APP_ORIGIN: string; N8N_WEBHOOK_URL: string; N8N_USER_WEBHOOK_URL?: string; N8N_SAC_WEBHOOK_URL?: string; N8N_CALLBACK_SECRET?: string; R2_PREFIX: string; ODOO_URL?: string; ODOO_DB?: string; ODOO_USER?: string; ODOO_API_KEY?: string; ODOO_PASSWORD?: string; ASSETS: Fetcher };
 const app = new Hono<{ Bindings: Env }>();
 app.use('/api/*', async (c, next) => cors({ origin: c.env.APP_ORIGIN, credentials: true })(c, next));
 
@@ -150,7 +150,7 @@ app.post('/api/usuarios/bulk', async c => {
       const nombre = input.nombre?.trim();
       const correo = input.correo?.trim().toLowerCase();
       const rol = input.rol || 'supervisor';
-      if (!usuario || !nombre || !correo || !['admin', 'supervisor'].includes(rol)) throw new Error('missing_or_invalid_fields');
+      if (!usuario || !nombre || !correo || !['admin', 'supervisor', 'sac'].includes(rol)) throw new Error('missing_or_invalid_fields');
       const id = crypto.randomUUID(); const now = new Date().toISOString(); const password = input.password?.trim() || generateTempPassword();
       const created = { id, usuario, nombre, correo, telefono: input.telefono?.trim() || '', rol: rol as RolUsuario, activo: true };
       await c.env.DB.prepare('insert into usuarios (id, usuario, nombre, correo, telefono, rol, activo, password_hash, must_change_password, creado_en) values (?, ?, ?, ?, ?, ?, 1, ?, 1, ?)')
@@ -181,25 +181,288 @@ app.delete('/api/usuarios/:id', async c => {
   const user = await requireUser(c, 'admin'); if (!user) return c.json({ error: 'unauthorized' }, 401);
   const id = c.req.param('id');
   if (id === user.id) return c.json({ error: 'cannot_delete_self' }, 400);
-  await c.env.DB.prepare('delete from sesiones where usuario_id = ?').bind(id).run();
-  await c.env.DB.prepare('delete from usuarios where id = ?').bind(id).run();
-  return c.json({ ok: true });
+  try {
+    await c.env.DB.prepare('delete from sesiones where usuario_id = ?').bind(id).run();
+    await c.env.DB.prepare('delete from invitaciones where usuario_id = ?').bind(id).run();
+    const result = await c.env.DB.prepare('delete from usuarios where id = ?').bind(id).run();
+    if (result.meta.changes === 0) return c.json({ error: 'not_found' }, 404);
+    return c.json({ ok: true });
+  } catch (error) {
+    return c.json({ error: 'delete_user_failed', detail: error instanceof Error ? error.message : String(error) }, 409);
+  }
 });
 
 app.get('/api/reportes', async c => {
   const user = await requireUser(c); if (!user) return c.json({ error: 'unauthorized' }, 401);
   const estado = c.req.query('estado'); const texto = `%${(c.req.query('texto') ?? '').toLowerCase()}%`;
+  const requestedLimit = Number(c.req.query('limit') ?? 100);
+  const limit = Number.isFinite(requestedLimit) ? Math.min(Math.max(Math.floor(requestedLimit), 1), 100) : 100;
   const where: string[] = []; const params: unknown[] = [];
   if (estado && estado !== 'Todos') { where.push('estado = ?'); params.push(estado); }
   if (texto !== '%%') { where.push('(lower(id) like ? or lower(cliente) like ? or lower(ubicacion) like ?)'); params.push(texto, texto, texto); }
-  if (user.rol !== 'admin') { where.push('(supervisor = ? or creado_por = ?)'); params.push(user.nombre, user.nombre); }
-  const sql = `select * from reportes ${where.length ? `where ${where.join(' and ')}` : ''} order by fecha desc limit 100`;
-  const rows = await c.env.DB.prepare(sql).bind(...params).all();
+  if (user.rol !== 'admin' && user.rol !== 'sac') { where.push('(supervisor = ? or creado_por = ?)'); params.push(user.nombre, user.nombre); }
+  const sql = `select * from reportes ${where.length ? `where ${where.join(' and ')}` : ''} order by fecha desc limit ?`;
+  const rows = await c.env.DB.prepare(sql).bind(...params, limit).all();
   return c.json({ items: rows.results.map(rowToReport), total: rows.results.length });
+});
+
+app.get('/api/clientes/resumen', async c => {
+  const user = await requireUser(c); if (!user) return c.json({ error: 'unauthorized' }, 401);
+  const texto = (c.req.query('q') ?? '').trim().toLowerCase();
+  const where: string[] = [];
+  const params: unknown[] = [];
+  if (texto) { where.push('lower(cliente) like ?'); params.push(`%${texto}%`); }
+  if (user.rol !== 'admin' && user.rol !== 'sac') { where.push('(supervisor = ? or creado_por = ?)'); params.push(user.nombre, user.nombre); }
+  const rows = await c.env.DB.prepare(`select * from reportes ${where.length ? `where ${where.join(' and ')}` : ''} order by fecha desc limit 500`).bind(...params).all<Record<string, unknown>>();
+  const map = new Map<string, ReturnType<typeof buildClientSummary>>();
+  for (const row of rows.results) {
+    const rs = rowToReport(row) as Record<string, any>;
+    const key = String(rs.cliente || 'Sin cliente').trim().toLowerCase();
+    const current = map.get(key) ?? buildClientSummary(rs);
+    appendClientReport(current, rs);
+    map.set(key, current);
+  }
+  return c.json({ items: [...map.values()].sort((a, b) => b.ultimo.localeCompare(a.ultimo)) });
+});
+
+app.get('/api/metricas/resumen', async c => {
+  const user = await requireUser(c); if (!user || !canReviewSac(user)) return c.json({ error: 'unauthorized' }, 401);
+  const range = metricsDateRange(c.req.query('periodo'), c.req.query('desde'), c.req.query('hasta'));
+  const filters = {
+    ciudad: (c.req.query('ciudad') ?? '').trim(),
+    supervisor: (c.req.query('supervisor') ?? '').trim(),
+    cliente: (c.req.query('cliente') ?? '').trim()
+  };
+
+  const optionRows = await c.env.DB.prepare('select cliente, supervisor from reportes where fecha >= ? and fecha <= ? order by fecha desc limit 20000').bind(range.desde, range.hasta).all<Record<string, unknown>>();
+  const optionClientes = uniqueOptions(optionRows.results.map(row => String(row.cliente ?? '')));
+  const optionSupervisores = uniqueOptions(optionRows.results.map(row => String(row.supervisor ?? '')));
+  const reportWhere = ['fecha >= ?', 'fecha <= ?']; const reportParams: unknown[] = [range.desde, range.hasta];
+  if (filters.supervisor) { reportWhere.push('lower(supervisor) like ?'); reportParams.push(`%${filters.supervisor.toLowerCase()}%`); }
+  if (filters.cliente) { reportWhere.push('lower(cliente) like ?'); reportParams.push(`%${filters.cliente.toLowerCase()}%`); }
+  const reportRows = await c.env.DB.prepare(`select * from reportes where ${reportWhere.join(' and ')} order by fecha desc limit 20000`).bind(...reportParams).all<Record<string, unknown>>();
+  let reports = reportRows.results.map(row => rowToReport(row) as Record<string, any>);
+  if (filters.ciudad) {
+    const city = filters.ciudad.toLowerCase();
+    reports = reports.filter(rs => String(rs.ciudad ?? '').toLowerCase().includes(city));
+  }
+
+  const hoursWhere = ['fecha >= ?', 'fecha <= ?']; const hoursParams: unknown[] = [range.desde, range.hasta];
+  if (filters.supervisor) { hoursWhere.push('lower(supervisor) like ?'); hoursParams.push(`%${filters.supervisor.toLowerCase()}%`); }
+  if (filters.cliente) { hoursWhere.push('lower(cliente) like ?'); hoursParams.push(`%${filters.cliente.toLowerCase()}%`); }
+  if (filters.ciudad) { hoursWhere.push('lower(ciudad) like ?'); hoursParams.push(`%${filters.ciudad.toLowerCase()}%`); }
+  let hoursWarning = '';
+  let hourRows: { results: Record<string, unknown>[] } = { results: [] };
+  try {
+    hourRows = await c.env.DB.prepare(`select * from horas_personal_sac where ${hoursWhere.join(' and ')} order by fecha desc limit 20000`).bind(...hoursParams).all<Record<string, unknown>>();
+  } catch (error) {
+    hoursWarning = error instanceof Error ? error.message : String(error);
+  }
+  const hours = hourRows.results;
+
+  const estado = new Map<string, number>(); const ciudad = new Map<string, number>(); const supervisor = new Map<string, number>(); const tipoVisita = new Map<string, number>();
+  const pendingClients = new Map<string, number>(); const retrabajoClient = new Map<string, number>(); const retrabajoSupervisor = new Map<string, number>();
+  for (const rs of reports) {
+    addMetric(estado, rs.estado || 'Sin estado');
+    addMetric(ciudad, rs.ciudad || 'Sin ciudad');
+    addMetric(supervisor, rs.supervisor || 'Sin supervisor');
+    addMetric(tipoVisita, rs.tipoVisita || 'Sin tipo');
+    if (rs.accionesPendientes || rs.proximaVisita || rs.recomendaciones) addMetric(pendingClients, rs.cliente || 'Sin cliente');
+  }
+  const employeeMap = new Map<string, { empleado: string; rol: string; reportes: Set<string>; horasTotales: number; horasNormales: number; horasExtra: number; horasRetrabajo: number; horasFueraHorario: number }>();
+  const retrabajoReports = new Set<string>();
+  let horasTotales = 0; let horasNormales = 0; let horasExtra = 0; let horasRetrabajo = 0; let horasFueraHorario = 0;
+  for (const row of hours) {
+    const empleado = String(row.empleado_nombre ?? 'Sin empleado');
+    const current = employeeMap.get(empleado) ?? { empleado, rol: String(row.rol ?? ''), reportes: new Set<string>(), horasTotales: 0, horasNormales: 0, horasExtra: 0, horasRetrabajo: 0, horasFueraHorario: 0 };
+    const total = Number(row.horas_totales ?? 0); const normal = Number(row.horas_normales ?? 0); const extra = Number(row.horas_extra ?? 0); const retrabajo = Number(row.horas_retrabajo ?? 0); const fuera = Number(row.horas_fuera_horario ?? 0);
+    current.reportes.add(String(row.reporte_id ?? ''));
+    current.horasTotales += total; current.horasNormales += normal; current.horasExtra += extra; current.horasRetrabajo += retrabajo; current.horasFueraHorario += fuera;
+    employeeMap.set(empleado, current);
+    horasTotales += total; horasNormales += normal; horasExtra += extra; horasRetrabajo += retrabajo; horasFueraHorario += fuera;
+    if (retrabajo > 0) {
+      retrabajoReports.add(String(row.reporte_id ?? ''));
+      addMetric(retrabajoClient, String(row.cliente ?? 'Sin cliente'), retrabajo);
+      addMetric(retrabajoSupervisor, String(row.supervisor ?? 'Sin supervisor'), retrabajo);
+    }
+  }
+  const empleados = [...employeeMap.values()].map(row => ({
+    empleado: row.empleado,
+    rol: row.rol,
+    reportes: row.reportes.size,
+    horasTotales: roundMetric(row.horasTotales),
+    horasNormales: roundMetric(row.horasNormales),
+    horasExtra: roundMetric(row.horasExtra),
+    horasRetrabajo: roundMetric(row.horasRetrabajo),
+    horasFueraHorario: roundMetric(row.horasFueraHorario)
+  }));
+  const clientes = new Set(reports.map(rs => String(rs.cliente || '').trim().toLowerCase()).filter(Boolean));
+  const pendientes = reports.filter(rs => rs.accionesPendientes || rs.proximaVisita || rs.recomendaciones);
+
+  return c.json({
+    periodo: range,
+    filtros: filters,
+    opciones: { clientes: optionClientes, supervisores: optionSupervisores },
+    warnings: hoursWarning ? [`No se pudieron leer horas SAC: ${hoursWarning}`] : [],
+    operacion: {
+      totalRs: reports.length,
+      firmados: reports.filter(rs => rs.estado === 'Firmado').length,
+      borradores: reports.filter(rs => rs.estado === 'Borrador').length,
+      pendientesFirma: reports.filter(rs => rs.estado === 'Pendiente de firma').length,
+      enRevision: reports.filter(rs => rs.estado === 'En revisión').length,
+      promedioHorasPorRs: roundMetric(horasTotales / Math.max(1, new Set(hours.map(row => String(row.reporte_id ?? ''))).size || reports.length || 1)),
+      porEstado: metricRows(estado),
+      porCiudad: metricRows(ciudad),
+      porSupervisor: metricRows(supervisor),
+      porTipoVisita: metricRows(tipoVisita)
+    },
+    sac: {
+      horasTotales: roundMetric(horasTotales),
+      horasNormales: roundMetric(horasNormales),
+      horasExtra: roundMetric(horasExtra),
+      horasRetrabajo: roundMetric(horasRetrabajo),
+      horasFueraHorario: roundMetric(horasFueraHorario),
+      empleados: empleados.length,
+      topHorasExtra: employeesBy(empleados, 'horasExtra'),
+      topRetrabajo: employeesBy(empleados, 'horasRetrabajo'),
+      topHorasTotales: employeesBy(empleados, 'horasTotales')
+    },
+    calidad: {
+      rsConRetrabajo: retrabajoReports.size,
+      porcentajeRetrabajo: roundMetric((retrabajoReports.size / Math.max(1, reports.length)) * 100),
+      retrabajosPorCliente: metricRows(retrabajoClient),
+      retrabajosPorSupervisor: metricRows(retrabajoSupervisor)
+    },
+    clientes: {
+      clientesAtendidos: clientes.size,
+      clientesConPendientes: pendingClients.size,
+      pendientes: pendientes.length,
+      proximasVisitas: reports.filter(rs => rs.proximaVisita).length,
+      topClientesPendientes: metricRows(pendingClients)
+    },
+    recientes: reports.slice(0, 10).map(rs => ({ id: rs.id, fecha: rs.fecha, cliente: rs.cliente, estado: rs.estado, ciudad: rs.ciudad || '', supervisor: rs.supervisor || '' }))
+  });
+});
+
+app.get('/api/sac/revisiones', async c => {
+  const user = await requireUser(c); if (!user || !canReviewSac(user)) return c.json({ error: 'unauthorized' }, 401);
+  const estado = c.req.query('estado');
+  const where = estado === 'pendiente' ? "where p.estado = 'Firmado' and coalesce(r.estado, 'pendiente') = 'pendiente'" : estado === 'revisado' ? "where p.estado = 'Firmado' and r.estado = 'revisado'" : "where p.estado = 'Firmado'";
+  const rows = await c.env.DB.prepare(`select p.*, r.estado as sac_estado, r.es_retrabajo, r.horas_extra_aprobadas, r.requiere_seguimiento, r.comentario, r.horas_totales, r.horas_fuera_horario, r.horas_retrabajo, r.horas_extra, r.horas_normales, r.revisado_por, r.revisado_en, r.actualizado_en as sac_actualizado_en from reportes p left join revisiones_sac r on r.reporte_id = p.id ${where} order by p.fecha desc limit 100`).all<Record<string, unknown>>();
+  const items = await Promise.all(rows.results.map(async row => {
+    const rs = rowToReport(row);
+    const calculated = calculateHours(rs as Record<string, any>, null);
+    const revision = rowToSacReview(row, calculated);
+    return { reporte: rs, revision: { ...revision, empleados: await loadSacEmployeeHours(c.env.DB, rs as Record<string, any>) } };
+  }));
+  return c.json({ items });
+});
+
+app.get('/api/sac/horas', async c => {
+  const user = await requireUser(c); if (!user || !canReviewSac(user)) return c.json({ error: 'unauthorized' }, 401);
+  const where: string[] = []; const params: unknown[] = [];
+  const like = (field: string, value: string | undefined) => { if (value?.trim()) { where.push(`lower(${field}) like ?`); params.push(`%${value.trim().toLowerCase()}%`); } };
+  like('empleado_nombre', c.req.query('empleado'));
+  like('cliente', c.req.query('cliente'));
+  like('supervisor', c.req.query('supervisor'));
+  like('ciudad', c.req.query('ciudad'));
+  if (c.req.query('desde')) { where.push('fecha >= ?'); params.push(c.req.query('desde')); }
+  if (c.req.query('hasta')) { where.push('fecha <= ?'); params.push(c.req.query('hasta')); }
+  if (c.req.query('tipo') === 'extra') where.push('horas_extra > 0');
+  if (c.req.query('tipo') === 'retrabajo') where.push('horas_retrabajo > 0');
+  const clause = where.length ? `where ${where.join(' and ')}` : '';
+  const summary = await c.env.DB.prepare(`select empleado_nombre, rol, count(distinct reporte_id) as reportes, sum(horas_totales) as horas_totales, sum(horas_normales) as horas_normales, sum(horas_extra) as horas_extra, sum(horas_retrabajo) as horas_retrabajo, sum(horas_fuera_horario) as horas_fuera_horario, max(fecha) as ultima_fecha from horas_personal_sac ${clause} group by empleado_nombre, rol order by empleado_nombre asc`).bind(...params).all<Record<string, unknown>>();
+  const detail = await c.env.DB.prepare(`select reporte_id, empleado_nombre, rol, fecha, cliente, ciudad, supervisor, hora_entrada, hora_salida, horas_totales, horas_fuera_horario, horas_normales, horas_extra, horas_retrabajo, es_retrabajo, horas_extra_aprobadas, actualizado_en from horas_personal_sac ${clause} order by fecha desc, empleado_nombre asc limit 1000`).bind(...params).all<Record<string, unknown>>();
+  return c.json({
+    items: summary.results.map(row => ({ empleado: String(row.empleado_nombre), rol: String(row.rol ?? ''), reportes: Number(row.reportes ?? 0), horasTotales: Number(row.horas_totales ?? 0), horasNormales: Number(row.horas_normales ?? 0), horasExtra: Number(row.horas_extra ?? 0), horasRetrabajo: Number(row.horas_retrabajo ?? 0), horasFueraHorario: Number(row.horas_fuera_horario ?? 0), ultimaFecha: String(row.ultima_fecha ?? '') })),
+    rows: detail.results.map(row => ({ reporteId: String(row.reporte_id), empleado: String(row.empleado_nombre), rol: String(row.rol ?? ''), fecha: String(row.fecha ?? ''), cliente: String(row.cliente ?? ''), ciudad: String(row.ciudad ?? ''), supervisor: String(row.supervisor ?? ''), horaEntrada: String(row.hora_entrada ?? ''), horaSalida: String(row.hora_salida ?? ''), horasTotales: Number(row.horas_totales ?? 0), horasFueraHorario: Number(row.horas_fuera_horario ?? 0), horasNormales: Number(row.horas_normales ?? 0), horasExtra: Number(row.horas_extra ?? 0), horasRetrabajo: Number(row.horas_retrabajo ?? 0), esRetrabajo: Boolean(row.es_retrabajo), horasExtraAprobadas: Boolean(row.horas_extra_aprobadas), actualizadoEn: String(row.actualizado_en ?? '') }))
+  });
+});
+
+app.get('/api/sac/seguimientos', async c => {
+  const user = await requireUser(c); if (!user || !canReviewSac(user)) return c.json({ error: 'unauthorized' }, 401);
+  const tipo = (c.req.query('tipo') ?? 'todos').trim();
+  const estado = (c.req.query('estado') ?? 'activo').trim();
+  const ciudad = (c.req.query('ciudad') ?? '').trim().toLowerCase();
+  const cliente = (c.req.query('cliente') ?? '').trim().toLowerCase();
+  const desde = c.req.query('desde');
+  const hasta = c.req.query('hasta');
+  const where: string[] = []; const params: unknown[] = [];
+  if (desde) { where.push('fecha >= ?'); params.push(desde); }
+  if (hasta) { where.push('fecha <= ?'); params.push(hasta); }
+  if (cliente) { where.push('lower(cliente) like ?'); params.push(`%${cliente}%`); }
+  const rows = await c.env.DB.prepare(`select * from reportes ${where.length ? `where ${where.join(' and ')}` : ''} order by fecha desc limit 1000`).bind(...params).all<Record<string, unknown>>();
+  const retrabajos = await c.env.DB.prepare('select reporte_id, horas_retrabajo, horas_extra, comentario, revisado_por, revisado_en from revisiones_sac where es_retrabajo = 1 or horas_retrabajo > 0 order by revisado_en desc limit 1000').all<Record<string, unknown>>();
+  const retrabajoMap = new Map(retrabajos.results.map(row => [String(row.reporte_id), row]));
+  const stateRows = await c.env.DB.prepare('select id, estado, nota, actualizado_por, actualizado_en from seguimientos_sac').all<Record<string, unknown>>();
+  const stateMap = new Map(stateRows.results.map(row => [String(row.id), row]));
+  const items: Array<Record<string, unknown>> = [];
+  const addFollowup = (item: Record<string, unknown>) => {
+    const saved = stateMap.get(String(item.id));
+    const estadoSeguimiento = String(saved?.estado ?? 'activo');
+    if (estado !== 'todos' && estadoSeguimiento !== estado) return;
+    items.push({ ...item, estadoSeguimiento, notaSeguimiento: saved?.nota ?? '', actualizadoPor: saved?.actualizado_por ?? '', actualizadoEn: saved?.actualizado_en ?? '' });
+  };
+  for (const row of rows.results) {
+    const rs = rowToReport(row) as Record<string, any>;
+    if (ciudad && !String(rs.ciudad ?? '').toLowerCase().includes(ciudad)) continue;
+    const base = { reporteId: rs.id, fecha: rs.fecha, cliente: rs.cliente, ciudad: rs.ciudad || '', supervisor: rs.supervisor || '', estado: rs.estado };
+    if (meaningfulFollowupText(rs.accionesPendientes)) addFollowup({ ...base, id: `${rs.id}:acciones`, tipo: 'acciones', prioridad: 'alta', titulo: 'Acciones pendientes', detalle: rs.accionesPendientes, fechaCompromiso: rs.fechaSeguimiento || '' });
+    if (meaningfulFollowupText(rs.recomendaciones)) addFollowup({ ...base, id: `${rs.id}:recomendaciones`, tipo: 'recomendaciones', prioridad: 'media', titulo: 'Recomendación registrada', detalle: rs.recomendaciones, fechaCompromiso: rs.fechaSeguimiento || '' });
+    if (rs.proximaVisita) addFollowup({ ...base, id: `${rs.id}:proxima`, tipo: 'proxima_visita', prioridad: 'alta', titulo: 'Próxima visita requerida', detalle: rs.fechaSeguimiento ? `Fecha sugerida: ${rs.fechaSeguimiento}` : 'Sin fecha definida', fechaCompromiso: rs.fechaSeguimiento || '' });
+    const retrabajo = retrabajoMap.get(String(rs.id));
+    if (retrabajo) addFollowup({ ...base, id: `${rs.id}:retrabajo`, tipo: 'retrabajo', prioridad: 'alta', titulo: 'RS marcado con retrabajo', detalle: `${Number(retrabajo.horas_retrabajo ?? 0)} h retrabajo · ${String(retrabajo.comentario ?? '')}`.trim(), fechaCompromiso: '', revisadoPor: retrabajo.revisado_por ?? '', revisadoEn: retrabajo.revisado_en ?? '' });
+  }
+  const filtered = tipo === 'todos' ? items : items.filter(item => item.tipo === tipo);
+  const clientes = uniqueOptions(rows.results.map(row => String(row.cliente ?? '')));
+  return c.json({ items: filtered.slice(0, 500), opciones: { clientes }, total: filtered.length });
+});
+
+app.put('/api/sac/seguimientos/:id', async c => {
+  const user = await requireUser(c); if (!user || !canReviewSac(user)) return c.json({ error: 'unauthorized' }, 401);
+  const body = await c.req.json<{ estado: 'activo' | 'hecho' | 'archivado'; nota?: string; reporteId?: string; tipo?: string }>();
+  if (!['activo', 'hecho', 'archivado'].includes(body.estado)) return c.json({ error: 'invalid_estado' }, 400);
+  const id = c.req.param('id');
+  const reporteId = body.reporteId || id.split(':')[0];
+  const tipo = body.tipo || id.split(':')[1] || 'seguimiento';
+  const now = new Date().toISOString();
+  await c.env.DB.prepare(`insert into seguimientos_sac (id, reporte_id, tipo, estado, nota, actualizado_por, actualizado_en)
+    values (?, ?, ?, ?, ?, ?, ?)
+    on conflict(id) do update set estado=excluded.estado, nota=excluded.nota, actualizado_por=excluded.actualizado_por, actualizado_en=excluded.actualizado_en`)
+    .bind(id, reporteId, tipo, body.estado, body.nota ?? '', user.nombre, now).run();
+  await c.env.DB.prepare('insert into timeline (id, reporte_id, tipo, actor, nota, creado_en) values (?, ?, ?, ?, ?, ?)')
+    .bind(crypto.randomUUID(), reporteId, `seguimiento_${body.estado}`, user.nombre, `${tipo}: ${body.nota ?? ''}`.trim(), now).run();
+  return c.json({ ok: true, id, estado: body.estado, actualizadoPor: user.nombre, actualizadoEn: now });
+});
+
+app.put('/api/sac/revisiones/:id', async c => {
+  const user = await requireUser(c); if (!user || !canReviewSac(user)) return c.json({ error: 'unauthorized' }, 401);
+  const id = c.req.param('id');
+  const row = await c.env.DB.prepare('select * from reportes where id = ?').bind(id).first<Record<string, unknown>>();
+  if (!row) return c.json({ error: 'not_found' }, 404);
+  const rs = rowToReport(row) as Record<string, any>;
+  const body = await c.req.json<{ empleados?: Array<{ nombre: string; horasExtra?: number; horasRetrabajo?: number }>; comentario?: string }>();
+  const employeeHours = calculateEmployeeHours(rs, body.empleados ?? []);
+  const hours = aggregateEmployeeHours(employeeHours);
+  const esRetrabajo = hours.horasRetrabajo > 0;
+  const horasExtraAprobadas = hours.horasExtra > 0;
+  const now = new Date().toISOString();
+  await c.env.DB.prepare(`insert into revisiones_sac (reporte_id, estado, es_retrabajo, horas_extra_aprobadas, requiere_seguimiento, comentario, horas_totales, horas_fuera_horario, horas_retrabajo, horas_extra, horas_normales, revisado_por, revisado_en, actualizado_en)
+    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    on conflict(reporte_id) do update set estado=excluded.estado, es_retrabajo=excluded.es_retrabajo, horas_extra_aprobadas=excluded.horas_extra_aprobadas, requiere_seguimiento=excluded.requiere_seguimiento, comentario=excluded.comentario, horas_totales=excluded.horas_totales, horas_fuera_horario=excluded.horas_fuera_horario, horas_retrabajo=excluded.horas_retrabajo, horas_extra=excluded.horas_extra, horas_normales=excluded.horas_normales, revisado_por=excluded.revisado_por, revisado_en=excluded.revisado_en, actualizado_en=excluded.actualizado_en`)
+    .bind(id, 'revisado', esRetrabajo ? 1 : 0, horasExtraAprobadas ? 1 : 0, 0, body.comentario ?? '', hours.horasTotales, hours.horasFueraHorario, hours.horasRetrabajo, hours.horasExtra, hours.horasNormales, user.nombre, now, now).run();
+  await saveSacEmployeeHours(c.env.DB, rs, employeeHours, esRetrabajo, horasExtraAprobadas, false, now);
+  await c.env.DB.prepare('insert into timeline (id, reporte_id, tipo, actor, nota, creado_en) values (?, ?, ?, ?, ?, ?)')
+    .bind(crypto.randomUUID(), id, 'revision_sac', user.nombre, esRetrabajo ? 'Revisión SAC con horas de retrabajo' : 'Revisión SAC completada', now).run();
+  if (c.env.N8N_SAC_WEBHOOK_URL) {
+    await fetch(c.env.N8N_SAC_WEBHOOK_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ tipo: 'revision_sac', reporteId: id, cliente: rs.cliente, fecha: rs.fecha, ciudad: rs.ciudad || '', supervisor: rs.supervisor, esRetrabajo, horasExtraAprobadas, requiereSeguimiento: false, comentario: body.comentario ?? '', horas: hours, empleados: employeeHours, revisadoPor: user.nombre, revisadoEn: now }) });
+  }
+  return c.json({ ok: true, revision: { reporteId: id, estado: 'revisado', esRetrabajo, horasExtraAprobadas, requiereSeguimiento: false, comentario: body.comentario ?? '', ...hours, empleados: employeeHours, revisadoPor: user.nombre, revisadoEn: now, actualizadoEn: now } });
 });
 
 app.post('/api/reportes', async c => {
   const user = await requireUser(c); if (!user) return c.json({ error: 'unauthorized' }, 401);
+  if (user.rol === 'sac') return c.json({ error: 'forbidden' }, 403);
   const body = await c.req.json().catch(() => ({})) as Record<string, unknown>;
   const now = new Date().toISOString(); const year = new Date().getFullYear();
   const last = await c.env.DB.prepare('select id from reportes where id like ? order by id desc limit 1').bind(`RS-${year}-%`).first<{ id: string }>();
@@ -228,12 +491,15 @@ app.get('/api/reportes/:id', async c => {
 
 app.put('/api/reportes/:id', async c => {
   const user = await requireUser(c); if (!user) return c.json({ error: 'unauthorized' }, 401);
+  if (user.rol === 'sac') return c.json({ error: 'forbidden' }, 403);
   const rs = await c.req.json(); const now = new Date().toISOString();
-  const previous = await c.env.DB.prepare('select estado, supervisor, creado_por from reportes where id = ?').bind(c.req.param('id')).first<Record<string, unknown>>();
+  const previous = await c.env.DB.prepare('select * from reportes where id = ?').bind(c.req.param('id')).first<Record<string, unknown>>();
+  const previousReport = previous ? rowToReport(previous) as Record<string, any> : null;
   if (previous && !canAccessReport(user, previous)) return c.json({ error: 'forbidden' }, 403);
   if (!rs.creadoPor) rs.creadoPor = user.nombre;
   if (!rs.supervisor || rs.supervisor === 'Carlos Hernández') rs.supervisor = user.nombre;
   stampSignature(c, rs, now);
+  if (previousReport && isLockedReportEdit(previousReport, rs)) return c.json({ error: 'report_locked_by_signature' }, 409);
   await saveReport(c.env.DB, rs, now);
   if (previous?.estado && previous.estado !== rs.estado) {
     await c.env.DB.prepare('insert into timeline (id, reporte_id, tipo, actor, nota, creado_en) values (?, ?, ?, ?, ?, ?)')
@@ -254,6 +520,10 @@ app.get('/api/reportes/:id/timeline', async c => {
 app.delete('/api/reportes/:id', async c => {
   const user = await requireUser(c, 'admin'); if (!user) return c.json({ error: 'unauthorized' }, 401);
   const id = c.req.param('id');
+  const row = await c.env.DB.prepare('select * from reportes where id = ?').bind(id).first<Record<string, unknown>>();
+  if (!row) return c.json({ error: 'not_found' }, 404);
+  const rs = rowToReport(row) as Record<string, any>;
+  if (rs.estado !== 'Borrador' || hasAnySignature(rs)) return c.json({ error: 'report_delete_locked' }, 409);
   const prefix = `${c.env.R2_PREFIX || 'reportes'}/${id}/`;
   let cursor: string | undefined;
   do {
@@ -270,9 +540,12 @@ app.delete('/api/reportes/:id', async c => {
 
 app.post('/api/reportes/:id/evidencias', async c => {
   const user = await requireUser(c); if (!user) return c.json({ error: 'unauthorized' }, 401);
+  if (user.rol === 'sac') return c.json({ error: 'forbidden' }, 403);
   const row = await c.env.DB.prepare('select * from reportes where id = ?').bind(c.req.param('id')).first<Record<string, unknown>>();
   if (!row) return c.json({ error: 'not_found' }, 404);
   if (!canAccessReport(user, row)) return c.json({ error: 'forbidden' }, 403);
+  const rs = rowToReport(row) as Record<string, any>;
+  if (hasAnySignature(rs)) return c.json({ error: 'report_locked_by_signature' }, 409);
   const form = await c.req.formData(); const file = form.get('file') as File | string | null;
   if (!file || typeof file === 'string') return c.json({ error: 'missing_file' }, 400);
   const categoria = String(form.get('categoria') ?? 'Durante'); const descripcion = String(form.get('descripcion') ?? file.name);
@@ -281,7 +554,7 @@ app.post('/api/reportes/:id/evidencias', async c => {
   await c.env.FILES.put(key, await file.arrayBuffer(), { httpMetadata: { contentType: file.type || 'application/octet-stream' } });
   await c.env.DB.prepare('insert into archivos (id, reporte_id, tipo, r2_key, creado_en) values (?, ?, ?, ?, ?)')
     .bind(id, c.req.param('id'), `foto:${categoria}`, key, new Date().toISOString()).run();
-  const rs = rowToReport(row) as Record<string, any>; const evidencias = Array.isArray(rs.evidencias) ? rs.evidencias : [];
+  const evidencias = Array.isArray(rs.evidencias) ? rs.evidencias : [];
   rs.evidencias = [...evidencias, { id, categoria, descripcion, blobKey: key, orden: evidencias.length }];
   rs.actualizadoEn = new Date().toISOString();
   await saveReport(c.env.DB, rs, rs.actualizadoEn);
@@ -292,10 +565,12 @@ app.post('/api/reportes/:id/evidencias', async c => {
 
 app.delete('/api/reportes/:id/evidencias/:evidenciaId', async c => {
   const user = await requireUser(c); if (!user) return c.json({ error: 'unauthorized' }, 401);
+  if (user.rol === 'sac') return c.json({ error: 'forbidden' }, 403);
   const row = await c.env.DB.prepare('select * from reportes where id = ?').bind(c.req.param('id')).first<Record<string, unknown>>();
   if (!row) return c.json({ error: 'not_found' }, 404);
   if (!canAccessReport(user, row)) return c.json({ error: 'forbidden' }, 403);
   const rs = rowToReport(row) as Record<string, any>; const evidencias = Array.isArray(rs.evidencias) ? rs.evidencias : [];
+  if (hasAnySignature(rs)) return c.json({ error: 'report_locked_by_signature' }, 409);
   const evidencia = evidencias.find((x: { id: string; blobKey?: string }) => x.id === c.req.param('evidenciaId'));
   if (evidencia?.blobKey) await c.env.FILES.delete(evidencia.blobKey);
   rs.evidencias = evidencias.filter((x: { id: string }) => x.id !== c.req.param('evidenciaId'));
@@ -325,6 +600,7 @@ app.post('/api/reportes/:id/pdf', async c => {
 
 app.post('/api/reportes/:id/enviar', async c => {
   const user = await requireUser(c); if (!user) return c.json({ error: 'unauthorized' }, 401);
+  if (user.rol === 'sac') return c.json({ error: 'forbidden' }, 403);
   const reportRow = await c.env.DB.prepare('select * from reportes where id = ?').bind(c.req.param('id')).first<Record<string, unknown>>();
   if (!reportRow) return c.json({ error: 'not_found' }, 404);
   if (!canAccessReport(user, reportRow)) return c.json({ error: 'forbidden' }, 403);
@@ -367,7 +643,7 @@ app.post('/api/entregas/:id/estado', async c => {
     .bind(body.estado, JSON.stringify({ provider: body.provider ?? 'slack', providerMessageId: body.providerMessageId ?? '', detalle: body.detalle ?? '' }), now, c.req.param('id')).run();
   if (result.meta.changes === 0) return c.json({ error: 'not_found' }, 404);
   await c.env.DB.prepare('insert into timeline (id, reporte_id, tipo, actor, nota, creado_en) values (?, ?, ?, ?, ?, ?)')
-    .bind(crypto.randomUUID(), entrega.reporte_id, `envio_${body.estado}`, body.provider ?? 'n8n', body.detalle ?? entrega.destinatario, now).run();
+    .bind(crypto.randomUUID(), entrega.reporte_id, `envio_${body.estado}`, body.provider ?? 'Sistema de entregas', body.detalle ?? entrega.destinatario, now).run();
   return c.json({ ok: true });
 });
 
@@ -382,7 +658,173 @@ async function requireUser(c: { req: { header(name: string): string | undefined 
   return user;
 }
 function canAccessReport(user: ReturnType<typeof rowToUser>, row: Record<string, unknown>) {
-  return user.rol === 'admin' || String(row.supervisor ?? '') === user.nombre || String(row.creado_por ?? row.creadoPor ?? '') === user.nombre;
+  return user.rol === 'admin' || user.rol === 'sac' || String(row.supervisor ?? '') === user.nombre || String(row.creado_por ?? row.creadoPor ?? '') === user.nombre;
+}
+function canReviewSac(user: ReturnType<typeof rowToUser>) {
+  return user.rol === 'admin' || user.rol === 'sac';
+}
+function metricsDateRange(periodo?: string, desde?: string, hasta?: string) {
+  const today = new Date();
+  const end = validDate(hasta) || today.toISOString().slice(0, 10);
+  const customStart = validDate(desde);
+  if (customStart) return { periodo: periodo || 'custom', desde: customStart, hasta: end };
+  if (periodo === 'mes_actual') return { periodo, desde: `${end.slice(0, 7)}-01`, hasta: end };
+  const days = periodo === '90d' ? 90 : periodo === '180d' ? 180 : periodo === '365d' ? 365 : 30;
+  const start = new Date(`${end}T12:00:00`);
+  start.setDate(start.getDate() - days + 1);
+  return { periodo: periodo || '30d', desde: start.toISOString().slice(0, 10), hasta: end };
+}
+function validDate(value?: string) {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return '';
+  const date = new Date(`${value}T12:00:00`);
+  return Number.isNaN(date.getTime()) ? '' : value;
+}
+function addMetric(map: Map<string, number>, key: string, amount = 1) {
+  const label = key?.trim() || 'Sin dato';
+  map.set(label, (map.get(label) ?? 0) + amount);
+}
+function roundMetric(value: number) {
+  return Number.isFinite(value) ? Math.round(value * 100) / 100 : 0;
+}
+function metricRows(map: Map<string, number>, limit = 10) {
+  return [...map.entries()].map(([label, value]) => ({ label, value: roundMetric(value) })).sort((a, b) => b.value - a.value || a.label.localeCompare(b.label)).slice(0, limit);
+}
+function uniqueOptions(values: string[], limit = 300) {
+  return [...new Set(values.map(value => value.trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b)).slice(0, limit);
+}
+function meaningfulFollowupText(value: unknown) {
+  const text = String(value ?? '').trim();
+  if (!text) return false;
+  const normalized = text.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[.\s]/g, '');
+  return !['no', 'n/a', 'na', 'ninguna', 'ninguno', 'sinrecomendaciones', 'sinpendientes', 'noaplica', 'none'].includes(normalized);
+}
+function employeesBy<T extends { reportes: number } & Record<string, string | number>>(rows: T[], field: keyof T, limit = 10) {
+  return [...rows].filter(row => Number(row[field] ?? 0) > 0).sort((a, b) => Number(b[field] ?? 0) - Number(a[field] ?? 0)).slice(0, limit);
+}
+function buildClientSummary(rs: Record<string, any>) {
+  return { nombre: String(rs.cliente || 'Sin cliente'), contacto: rs.contacto || '', correo: rs.correo || '', telefono: rs.telefono || '', ciudad: rs.ciudad || '', ubicacion: rs.ubicacion || '', total: 0, ultimo: rs.fecha || '', pendientes: 0, proximaVisita: 0, reportes: [] as unknown[], equipos: [] as unknown[], recomendaciones: [] as unknown[] };
+}
+function appendClientReport(client: ReturnType<typeof buildClientSummary>, rs: Record<string, any>) {
+  client.total += 1;
+  if (rs.fecha && String(rs.fecha) > client.ultimo) {
+    client.ultimo = String(rs.fecha);
+    client.contacto = rs.contacto || client.contacto;
+    client.correo = rs.correo || client.correo;
+    client.telefono = rs.telefono || client.telefono;
+    client.ciudad = rs.ciudad || client.ciudad;
+    client.ubicacion = rs.ubicacion || client.ubicacion;
+  }
+  if (rs.accionesPendientes || rs.proximaVisita || rs.recomendaciones) client.pendientes += 1;
+  if (rs.proximaVisita) client.proximaVisita += 1;
+  client.reportes.push({ id: rs.id, fecha: rs.fecha, estado: rs.estado, tipoVisita: rs.tipoVisita, supervisor: rs.supervisor, ciudad: rs.ciudad || '', trabajoRealizado: rs.trabajoRealizado || '', observaciones: rs.observaciones || '', recomendaciones: rs.recomendaciones || '', accionesPendientes: rs.accionesPendientes || '', proximaVisita: Boolean(rs.proximaVisita), fechaSeguimiento: rs.fechaSeguimiento || '' });
+  for (const equipo of Array.isArray(rs.equipos) ? rs.equipos : []) {
+    client.equipos.push({ rsId: rs.id, fecha: rs.fecha, nombre: equipo.nombre || '', marca: equipo.marca || '', modelo: equipo.modelo || '', serie: equipo.serie || '', ubicacion: equipo.ubicacion || '', trabajoRealizado: equipo.trabajoRealizado || '', recomendacion: equipo.recomendacion || '' });
+  }
+  if (rs.recomendaciones || rs.accionesPendientes || rs.proximaVisita) {
+    client.recomendaciones.push({ rsId: rs.id, fecha: rs.fecha, recomendaciones: rs.recomendaciones || '', accionesPendientes: rs.accionesPendientes || '', proximaVisita: Boolean(rs.proximaVisita), fechaSeguimiento: rs.fechaSeguimiento || '', observaciones: rs.observaciones || '' });
+  }
+}
+function minutesFromTime(value: unknown) {
+  const match = String(value ?? '').match(/^(\d{1,2}):(\d{2})/);
+  if (!match) return null;
+  return Number(match[1]) * 60 + Number(match[2]);
+}
+function durationMinutes(start: unknown, end: unknown) {
+  const a = minutesFromTime(start); const b = minutesFromTime(end);
+  if (a === null || b === null) return 0;
+  return b >= a ? b - a : b + 24 * 60 - a;
+}
+function outsideBusinessMinutes(start: unknown, end: unknown, date?: unknown) {
+  const a = minutesFromTime(start); const b = minutesFromTime(end);
+  if (a === null || b === null) return 0;
+  const ranges = b >= a ? [[a, b]] : [[a, 24 * 60], [0, b]];
+  const day = date ? new Date(`${String(date)}T12:00:00`).getDay() : 1;
+  if (day === 0) return ranges.reduce((sum, [from, to]) => sum + Math.max(0, to - from), 0);
+  const businessStart = 8 * 60; const businessEnd = day === 6 ? 13 * 60 : 17 * 60;
+  return ranges.reduce((sum, [from, to]) => {
+    const before = Math.max(0, Math.min(to, businessStart) - from);
+    const after = Math.max(0, to - Math.max(from, businessEnd));
+    return sum + before + after;
+  }, 0);
+}
+function roundHours(minutes: number) {
+  return Math.round((minutes / 60) * 100) / 100;
+}
+function calculateHours(rs: Record<string, any>, mode: 'retrabajo' | 'extra' | 'normal' | null) {
+  const people = Array.isArray(rs.personal) ? rs.personal : [];
+  const totalMinutes = people.reduce((sum: number, p: Record<string, unknown>) => sum + durationMinutes(p.horaEntrada, p.horaSalida), 0);
+  const outsideMinutes = people.reduce((sum: number, p: Record<string, unknown>) => sum + outsideBusinessMinutes(p.horaEntrada, p.horaSalida, rs.fecha), 0);
+  const retrabajoMinutes = mode === 'retrabajo' ? totalMinutes : 0;
+  const extraMinutes = mode === 'extra' ? outsideMinutes : 0;
+  const normalMinutes = Math.max(0, totalMinutes - retrabajoMinutes - extraMinutes);
+  return { horasTotales: roundHours(totalMinutes), horasFueraHorario: roundHours(outsideMinutes), horasRetrabajo: roundHours(retrabajoMinutes), horasExtra: roundHours(extraMinutes), horasNormales: roundHours(normalMinutes) };
+}
+function clampHours(value: unknown, max: number) {
+  const parsed = Number(value ?? 0);
+  if (!Number.isFinite(parsed) || parsed < 0) return 0;
+  return Math.min(Math.round(parsed * 100) / 100, max);
+}
+function calculatePersonHours(person: Record<string, unknown>, date: unknown, manual?: { horasExtra?: unknown; horasRetrabajo?: unknown }) {
+  const totalMinutes = durationMinutes(person.horaEntrada, person.horaSalida);
+  const outsideMinutes = outsideBusinessMinutes(person.horaEntrada, person.horaSalida, date);
+  const totalHours = roundHours(totalMinutes);
+  const horasRetrabajo = clampHours(manual?.horasRetrabajo, totalHours);
+  const horasExtra = clampHours(manual?.horasExtra, Math.max(0, totalHours - horasRetrabajo));
+  return { horasTotales: totalHours, horasFueraHorario: roundHours(outsideMinutes), horasRetrabajo, horasExtra, horasNormales: Math.max(0, Math.round((totalHours - horasRetrabajo - horasExtra) * 100) / 100) };
+}
+function calculateEmployeeHours(rs: Record<string, any>, manual: Array<{ nombre: string; horasExtra?: number; horasRetrabajo?: number }> = []) {
+  const people = Array.isArray(rs.personal) ? rs.personal : [];
+  return people.filter((person: Record<string, unknown>) => person?.nombre).map((person: Record<string, unknown>) => ({
+    nombre: String(person.nombre),
+    rol: String(person.rol ?? ''),
+    horaEntrada: String(person.horaEntrada ?? ''),
+    horaSalida: String(person.horaSalida ?? ''),
+    ...calculatePersonHours(person, rs.fecha, manual.find(item => item.nombre === String(person.nombre)))
+  }));
+}
+function aggregateEmployeeHours(employeeHours: ReturnType<typeof calculateEmployeeHours>) {
+  const sum = employeeHours.reduce((acc, person) => ({
+    horasTotales: acc.horasTotales + person.horasTotales,
+    horasFueraHorario: acc.horasFueraHorario + person.horasFueraHorario,
+    horasRetrabajo: acc.horasRetrabajo + person.horasRetrabajo,
+    horasExtra: acc.horasExtra + person.horasExtra,
+    horasNormales: acc.horasNormales + person.horasNormales
+  }), { horasTotales: 0, horasFueraHorario: 0, horasRetrabajo: 0, horasExtra: 0, horasNormales: 0 });
+  return Object.fromEntries(Object.entries(sum).map(([key, value]) => [key, Math.round(value * 100) / 100])) as typeof sum;
+}
+async function saveSacEmployeeHours(db: D1Database, rs: Record<string, any>, employeeHours: ReturnType<typeof calculateEmployeeHours>, esRetrabajo: boolean, horasExtraAprobadas: boolean, requiereSeguimiento: boolean, now: string) {
+  await db.prepare('delete from horas_personal_sac where reporte_id = ?').bind(rs.id).run();
+  for (const person of employeeHours) {
+    await db.prepare(`insert into horas_personal_sac (id, reporte_id, empleado_nombre, rol, fecha, cliente, ciudad, supervisor, hora_entrada, hora_salida, horas_totales, horas_fuera_horario, horas_normales, horas_extra, horas_retrabajo, es_retrabajo, horas_extra_aprobadas, requiere_seguimiento, actualizado_en)
+      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .bind(crypto.randomUUID(), rs.id, person.nombre, person.rol, rs.fecha ?? '', rs.cliente ?? '', rs.ciudad ?? '', rs.supervisor ?? '', person.horaEntrada, person.horaSalida, person.horasTotales, person.horasFueraHorario, person.horasNormales, person.horasExtra, person.horasRetrabajo, esRetrabajo === null ? null : esRetrabajo ? 1 : 0, horasExtraAprobadas ? 1 : 0, requiereSeguimiento ? 1 : 0, now).run();
+  }
+}
+async function loadSacEmployeeHours(db: D1Database, rs: Record<string, any>) {
+  const saved = await db.prepare('select empleado_nombre, rol, hora_entrada, hora_salida, horas_totales, horas_fuera_horario, horas_normales, horas_extra, horas_retrabajo from horas_personal_sac where reporte_id = ? order by empleado_nombre asc').bind(rs.id).all<Record<string, unknown>>();
+  if (saved.results.length) return saved.results.map(row => ({ nombre: String(row.empleado_nombre), rol: String(row.rol ?? ''), horaEntrada: String(row.hora_entrada ?? ''), horaSalida: String(row.hora_salida ?? ''), horasTotales: Number(row.horas_totales ?? 0), horasFueraHorario: Number(row.horas_fuera_horario ?? 0), horasNormales: Number(row.horas_normales ?? 0), horasExtra: Number(row.horas_extra ?? 0), horasRetrabajo: Number(row.horas_retrabajo ?? 0) }));
+  return calculateEmployeeHours(rs);
+}
+function rowToSacReview(row: Record<string, unknown>, calculated: ReturnType<typeof calculateHours>) {
+  const esRetrabajo = row.es_retrabajo === null || row.es_retrabajo === undefined ? null : Boolean(row.es_retrabajo);
+  const mode = esRetrabajo ? 'retrabajo' : row.horas_extra_aprobadas ? 'extra' : 'normal';
+  const fallback = calculateHours(rowToReport(row) as Record<string, any>, mode);
+  return {
+    reporteId: String(row.id),
+    estado: String(row.sac_estado ?? 'pendiente'),
+    esRetrabajo,
+    horasExtraAprobadas: Boolean(row.horas_extra_aprobadas),
+    requiereSeguimiento: Boolean(row.requiere_seguimiento),
+    comentario: String(row.comentario ?? ''),
+    horasTotales: Number(row.horas_totales ?? calculated.horasTotales ?? fallback.horasTotales),
+    horasFueraHorario: Number(row.horas_fuera_horario ?? calculated.horasFueraHorario ?? fallback.horasFueraHorario),
+    horasRetrabajo: Number(row.horas_retrabajo ?? fallback.horasRetrabajo),
+    horasExtra: Number(row.horas_extra ?? fallback.horasExtra),
+    horasNormales: Number(row.horas_normales ?? fallback.horasNormales),
+    revisadoPor: row.revisado_por ? String(row.revisado_por) : undefined,
+    revisadoEn: row.revisado_en ? String(row.revisado_en) : undefined,
+    actualizadoEn: row.sac_actualizado_en ? String(row.sac_actualizado_en) : undefined
+  };
 }
 async function createAndSendInvite(env: Env, usuario: { id: string; usuario: string; nombre: string; correo: string; telefono: string; rol: RolUsuario }, creadoPor: string) {
   const token = generateInviteToken();
@@ -525,7 +967,32 @@ function fromBase64(value: string) {
   return bytes;
 }
 function rowToUser(row: Record<string, unknown>) { return { id: String(row.id), usuario: String(row.usuario), nombre: String(row.nombre), correo: String(row.correo), telefono: String(row.telefono ?? ''), rol: row.rol as RolUsuario, activo: Boolean(row.activo), mustChangePassword: Boolean(row.must_change_password) }; }
-function rowToReport(row: Record<string, unknown>) { const payload = row.payload_json ? JSON.parse(String(row.payload_json)) : {}; return { ...payload, id: row.id, estado: row.estado, version: row.version, fecha: row.fecha, cliente: row.cliente, contacto: row.contacto, correo: row.correo, telefono: row.telefono, ciudad: payload.ciudad ?? '', ubicacion: row.ubicacion, ordenTrabajo: row.orden_trabajo, solicitadoPor: row.solicitado_por, tipoVisita: row.tipo_visita, horaLlegada: row.hora_llegada, horaSalida: row.hora_salida, trabajoRealizado: row.trabajo_realizado, observaciones: row.observaciones, estadoActual: row.estado_actual, recomendaciones: row.recomendaciones, accionesPendientes: row.acciones_pendientes, proximaVisita: Boolean(row.proxima_visita), fechaSeguimiento: row.fecha_seguimiento, supervisor: row.supervisor, creadoPor: row.creado_por, creadoEn: row.creado_en, actualizadoEn: row.actualizado_en, resumenEquipo: row.resumen_equipo }; }
+function rowToReport(row: Record<string, unknown>): Record<string, any> {
+  let payload: Record<string, any> = {};
+  if (row.payload_json) {
+    try { payload = JSON.parse(String(row.payload_json)); } catch { payload = {}; }
+  }
+  return { ...payload, id: row.id, estado: row.estado, version: row.version, fecha: row.fecha, cliente: row.cliente, contacto: row.contacto, correo: row.correo, telefono: row.telefono, ciudad: payload.ciudad ?? '', ubicacion: row.ubicacion, ordenTrabajo: row.orden_trabajo, solicitadoPor: row.solicitado_por, tipoVisita: row.tipo_visita, horaLlegada: row.hora_llegada, horaSalida: row.hora_salida, trabajoRealizado: row.trabajo_realizado, observaciones: row.observaciones, estadoActual: row.estado_actual, recomendaciones: row.recomendaciones, accionesPendientes: row.acciones_pendientes, proximaVisita: Boolean(row.proxima_visita), fechaSeguimiento: row.fecha_seguimiento, supervisor: row.supervisor, creadoPor: row.creado_por, creadoEn: row.creado_en, actualizadoEn: row.actualizado_en, resumenEquipo: row.resumen_equipo };
+}
+function hasAnySignature(rs: Record<string, any> | null | undefined) {
+  return Boolean(rs?.firma?.trazo || rs?.firmaSupervisor?.trazo);
+}
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  if (value && typeof value === 'object') {
+    const obj = value as Record<string, unknown>;
+    return `{${Object.keys(obj).sort().map(key => `${JSON.stringify(key)}:${stableStringify(obj[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value ?? null);
+}
+function comparableReportContent(value: Record<string, any>) {
+  const clone = JSON.parse(JSON.stringify(value ?? {})) as Record<string, any>;
+  for (const key of ['firma', 'firmaSupervisor', 'estado', 'version', 'actualizadoEn']) delete clone[key];
+  return stableStringify(clone);
+}
+function isLockedReportEdit(previous: Record<string, any>, next: Record<string, any>) {
+  return hasAnySignature(previous) && comparableReportContent(previous) !== comparableReportContent(next);
+}
 async function saveReport(db: D1Database, rs: Record<string, any>, now: string) {
   await db.prepare(`insert into reportes (id, estado, version, fecha, cliente, contacto, correo, telefono, ubicacion, orden_trabajo, solicitado_por, tipo_visita, hora_llegada, hora_salida, trabajo_realizado, observaciones, estado_actual, recomendaciones, acciones_pendientes, proxima_visita, fecha_seguimiento, supervisor, creado_por, creado_en, actualizado_en, resumen_equipo, payload_json) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) on conflict(id) do update set estado=excluded.estado, version=reportes.version+1, fecha=excluded.fecha, cliente=excluded.cliente, contacto=excluded.contacto, correo=excluded.correo, telefono=excluded.telefono, ubicacion=excluded.ubicacion, orden_trabajo=excluded.orden_trabajo, solicitado_por=excluded.solicitado_por, tipo_visita=excluded.tipo_visita, hora_llegada=excluded.hora_llegada, hora_salida=excluded.hora_salida, trabajo_realizado=excluded.trabajo_realizado, observaciones=excluded.observaciones, estado_actual=excluded.estado_actual, recomendaciones=excluded.recomendaciones, acciones_pendientes=excluded.acciones_pendientes, proxima_visita=excluded.proxima_visita, fecha_seguimiento=excluded.fecha_seguimiento, supervisor=excluded.supervisor, actualizado_en=excluded.actualizado_en, resumen_equipo=excluded.resumen_equipo, payload_json=excluded.payload_json`)
     .bind(rs.id, rs.estado, rs.version ?? 1, rs.fecha, rs.cliente ?? '', rs.contacto ?? '', rs.correo ?? '', rs.telefono ?? '', rs.ubicacion ?? '', rs.ordenTrabajo ?? '', rs.solicitadoPor ?? '', rs.tipoVisita ?? '', rs.horaLlegada ?? '', rs.horaSalida ?? '', rs.trabajoRealizado ?? '', rs.observaciones ?? '', rs.estadoActual ?? '', rs.recomendaciones ?? '', rs.accionesPendientes ?? '', rs.proximaVisita ? 1 : 0, rs.fechaSeguimiento ?? '', rs.supervisor ?? '', rs.creadoPor ?? '', rs.creadoEn ?? now, now, rs.resumenEquipo ?? '', JSON.stringify(rs)).run();
@@ -594,16 +1061,18 @@ async function renderPdfHtml(rs: ReturnType<typeof rowToReport>, env: Env) {
     .text-box strong { display: block; color: #555555; margin-bottom: 4px; font-size: 11.5px; }
     .text-box p { margin: 0; white-space: pre-wrap; }
     .two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .evidence-section { break-before: page; page-break-before: always; }
     .photos { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-top: 16px; }
     .photo { border: 1px solid #dddddd; background: #ffffff; padding: 7px; page-break-inside: avoid; }
     .photo img { display: block; width: 100%; height: 205px; object-fit: cover; background: #f2f2f2; }
     .photo strong { display: inline-block; margin-top: 6px; font-size: 11.5px; color: #555555; }
     .photo span { display: block; color: #666666; font-size: 11px; }
     .signature-table { width: 100%; table-layout: fixed; border-collapse: collapse; margin-top: 16px; page-break-inside: avoid; }
-    .signature-table td { width: 50%; vertical-align: bottom; padding: 8px 18px; border: none; text-align: center; }
+    .signature-table td { width: 50%; vertical-align: top; padding: 8px 18px; border: none; text-align: center; }
+    .signature-card { min-height: 166px; page-break-inside: avoid; }
     .signature-slot { height: 92px; display: flex; align-items: flex-end; justify-content: center; }
     .signature { height: 82px; max-width: 240px; object-fit: contain; display: block; }
-    .signature-line { min-height: 58px; border-top: 1px solid #555555; padding-top: 5px; font-size: 11.5px; }
+    .signature-line { min-height: 74px; border-top: 1px solid #555555; padding-top: 5px; font-size: 11.5px; }
     .signature-meta { display: block; color: #666666; font-size: 9.5px; line-height: 1.15; margin-top: 2px; }
     .manual-footer { position: fixed; left: 0; right: 0; bottom: 0; height: 0.34in; border-top: 1px solid #dddddd; padding-top: 5px; color: #666666; font-size: 9.2px; line-height: 1.18; text-align: center; background: #ffffff; }
   </style>
@@ -673,15 +1142,17 @@ async function renderPdfHtml(rs: ReturnType<typeof rowToReport>, env: Env) {
     </table>
   </div>
 
-  <table class="o_main_table">
-    <tbody><tr class="section-title-row"><td>Evidencias fotográficas</td></tr></tbody>
-  </table>
-  ${fotos.length ? `<div class="photos">${fotos.map((e: Record<string, unknown>) => `<div class="photo">${e.dataUrl ? `<img src="${esc(e.dataUrl)}" alt="${esc(e.descripcion)}">` : ''}<strong>${esc(e.categoria)}</strong><span>${esc(e.descripcion)}</span></div>`).join('')}</div>` : empty}
+  <section class="evidence-section">
+    <table class="o_main_table">
+      <tbody><tr class="section-title-row"><td>Evidencias fotográficas</td></tr></tbody>
+    </table>
+    ${fotos.length ? `<div class="photos">${fotos.map((e: Record<string, unknown>) => `<div class="photo">${e.dataUrl ? `<img src="${esc(e.dataUrl)}" alt="${esc(e.descripcion)}">` : ''}<strong>${esc(e.categoria)}</strong><span>${esc(e.descripcion)}</span></div>`).join('')}</div>` : empty}
+  </section>
 
   <table class="signature-table">
     <tr>
-      <td><div class="signature-slot">${rs.firmaSupervisor ? `<img class="signature" src="${esc(rs.firmaSupervisor.trazo)}">` : ''}</div><div class="signature-line"><strong>${esc(rs.firmaSupervisor?.nombre || rs.supervisor || 'Supervisor de campo')}</strong><br>${esc(rs.firmaSupervisor?.cargo || 'Supervisor de campo')}<span class="signature-meta">Firmado: ${esc(formatDateTime(rs.firmaSupervisor?.firmadaEn))}${rs.firmaSupervisor?.ip ? ` · IP: ${esc(rs.firmaSupervisor.ip)}` : ''}${rs.firmaSupervisor?.ubicacion ? ` · Ubicación: ${esc(formatLocation(rs.firmaSupervisor.ubicacion))}` : ''}</span></div></td>
-      <td><div class="signature-slot">${rs.firma ? `<img class="signature" src="${esc(rs.firma.trazo)}">` : ''}</div><div class="signature-line"><strong>${esc(rs.firma?.nombre || 'Cliente')}</strong><br>${esc(rs.firma?.cargo || 'Firma del cliente')}<span class="signature-meta">Firmado: ${esc(formatDateTime(rs.firma?.firmadaEn))}${rs.firma?.ip ? ` · IP: ${esc(rs.firma.ip)}` : ''}${rs.firma?.ubicacion ? ` · Ubicación: ${esc(formatLocation(rs.firma.ubicacion))}` : ''}</span></div></td>
+      <td><div class="signature-card"><div class="signature-slot">${rs.firmaSupervisor ? `<img class="signature" src="${esc(rs.firmaSupervisor.trazo)}">` : ''}</div><div class="signature-line"><strong>${esc(rs.firmaSupervisor?.nombre || rs.supervisor || 'Supervisor de campo')}</strong><br>${esc(rs.firmaSupervisor?.cargo || 'Supervisor de campo')}<span class="signature-meta">Firmado: ${esc(formatDateTime(rs.firmaSupervisor?.firmadaEn))}${rs.firmaSupervisor?.ip ? ` · IP: ${esc(rs.firmaSupervisor.ip)}` : ''}${rs.firmaSupervisor?.ubicacion ? ` · Ubicación: ${esc(formatLocation(rs.firmaSupervisor.ubicacion))}` : ''}</span></div></div></td>
+      <td><div class="signature-card"><div class="signature-slot">${rs.firma ? `<img class="signature" src="${esc(rs.firma.trazo)}">` : ''}</div><div class="signature-line"><strong>${esc(rs.firma?.nombre || 'Cliente')}</strong><br><strong>Nombre y firma de cliente</strong><br>${esc(rs.firma?.cargo || 'Cliente')}<span class="signature-meta">Firmado: ${esc(formatDateTime(rs.firma?.firmadaEn))}${rs.firma?.ip ? ` · IP: ${esc(rs.firma.ip)}` : ''}${rs.firma?.ubicacion ? ` · Ubicación: ${esc(formatLocation(rs.firma.ubicacion))}` : ''}</span></div></div></td>
     </tr>
   </table>
 

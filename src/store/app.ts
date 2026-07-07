@@ -36,6 +36,6 @@ export const useApp = create<AppState>((set, get) => ({
     }
   },
   logout() { sessionStorage.removeItem('rs-user'); sessionStorage.removeItem('rs-token'); set({ user: null }); },
-  async load() { set({ loading: true }); const [list, metrics] = await Promise.all([reports.list(), reports.metrics()]); set({ items: list.items, metrics, loading: false }); },
+  async load() { set({ loading: true }); const [list, metrics] = await Promise.all([reports.list({ limit: 15 }), reports.metrics()]); set({ items: list.items, metrics, loading: false }); },
   notify(message) { set({ toast: message }); window.setTimeout(() => { if (get().toast === message) set({ toast: '' }); }, 2400); }
 }));

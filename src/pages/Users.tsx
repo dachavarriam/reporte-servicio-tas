@@ -5,7 +5,7 @@ import { jsonHeaders, authHeaders } from '../data/api';
 import type { RolUsuario, Usuario } from '../domain/types';
 import { useApp } from '../store/app';
 
-const roles: RolUsuario[] = ['admin', 'supervisor'];
+const roles: RolUsuario[] = ['admin', 'supervisor', 'sac'];
 
 export function UsersPage() {
   const current = useApp(s => s.user); const notify = useApp(s => s.notify);
@@ -34,7 +34,7 @@ export function UsersPage() {
     if (!res.ok) { notify('No se pudo crear el usuario'); return; }
     const data = await res.json() as { invite?: { sent?: boolean; inviteUrl?: string } };
     form.reset();
-    notify(data.invite?.sent ? 'Usuario creado e invitación enviada' : 'Usuario creado; revise n8n');
+    notify(data.invite?.sent ? 'Usuario creado e invitación enviada' : 'Usuario creado; revise el servicio de invitaciones');
     await load();
   }
 
@@ -48,14 +48,14 @@ export function UsersPage() {
     if (user.id === current?.id) { notify('No puedes eliminar tu propio usuario'); return; }
     if (!window.confirm(`Eliminar usuario ${user.nombre}? Esta acción no se puede deshacer.`)) return;
     const res = await fetch(`/api/usuarios/${user.id}`, { method: 'DELETE', headers: authHeaders() });
-    if (!res.ok) { notify('No se pudo eliminar el usuario'); return; }
+    if (!res.ok) { const data = await res.json().catch(() => ({})) as { error?: string }; notify(data.error === 'cannot_delete_self' ? 'No puedes eliminar tu propio usuario' : 'No se pudo eliminar el usuario'); return; }
     notify('Usuario eliminado'); await load();
   }
 
   if (current?.rol !== 'admin') return <div className="page"><div className="alert warning"><ShieldCheck /> Solo un administrador puede gestionar usuarios.</div></div>;
 
   return <div className="page">
-    <div className="page-heading"><h1>Usuarios</h1><p>Alta inicial de administradores y supervisores.</p></div>
+    <div className="page-heading"><h1>Usuarios</h1><p>Alta inicial de administradores, supervisores y SAC.</p></div>
     <section className="detail-section">
       <div className="section-title"><h2>Crear usuario</h2><UserPlus /></div>
       <form className="form-grid" onSubmit={createUser}>

@@ -4,7 +4,7 @@ import type { CategoriaFoto, Cliente, EstadoRS, Metrics, ReporteServicio, Timeli
 import { uid } from '../domain/types';
 
 export interface ReportRepository {
-  list(query?: { estado?: EstadoRS | 'Todos'; texto?: string }): Promise<{ items: ReporteServicio[]; total: number }>;
+  list(query?: { estado?: EstadoRS | 'Todos'; texto?: string; limit?: number }): Promise<{ items: ReporteServicio[]; total: number }>;
   get(id: string): Promise<ReporteServicio | null>;
   timeline(id: string): Promise<TimelineEvento[]>;
   createDraft(partial?: Partial<ReporteServicio>): Promise<ReporteServicio>;
@@ -27,11 +27,12 @@ const allowed: Record<EstadoRS, EstadoRS[]> = {
 
 export class LocalReportRepository implements ReportRepository {
   async ready() { await seedDatabase(); }
-  async list(query: { estado?: EstadoRS | 'Todos'; texto?: string } = {}) {
+  async list(query: { estado?: EstadoRS | 'Todos'; texto?: string; limit?: number } = {}) {
     await this.ready();
     let items = await db.reportes.orderBy('fecha').reverse().toArray();
     if (query.estado && query.estado !== 'Todos') items = items.filter(x => x.estado === query.estado);
     if (query.texto) { const q = query.texto.toLocaleLowerCase(); items = items.filter(x => `${x.id} ${x.cliente} ${x.ubicacion}`.toLocaleLowerCase().includes(q)); }
+    if (query.limit) items = items.slice(0, query.limit);
     return { items, total: items.length };
   }
   async get(id: string) { await this.ready(); return (await db.reportes.get(id)) ?? null; }
@@ -58,10 +59,11 @@ export class RemoteReportRepository implements ReportRepository {
     if (!res.ok) throw new Error(`API ${res.status}`);
     return res.json() as Promise<T>;
   }
-  async list(query: { estado?: EstadoRS | 'Todos'; texto?: string } = {}) {
+  async list(query: { estado?: EstadoRS | 'Todos'; texto?: string; limit?: number } = {}) {
     const params = new URLSearchParams();
     if (query.estado) params.set('estado', query.estado);
     if (query.texto) params.set('texto', query.texto);
+    if (query.limit) params.set('limit', String(query.limit));
     return this.request<{ items: ReporteServicio[]; total: number }>(`/api/reportes?${params}`);
   }
   async get(id: string) { try { return await this.request<ReporteServicio>(`/api/reportes/${encodeURIComponent(id)}`); } catch { return null; } }

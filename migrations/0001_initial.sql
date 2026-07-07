@@ -1,6 +1,6 @@
 create table if not exists usuarios (
   id text primary key, usuario text not null unique, nombre text not null, correo text not null unique,
-  telefono text, rol text not null check (rol in ('admin','supervisor','tecnico')), activo integer not null default 1,
+  telefono text, rol text not null check (rol in ('admin','supervisor','sac','tecnico')), activo integer not null default 1,
   password_hash text not null, must_change_password integer not null default 1, creado_en text not null
 ) strict;
 

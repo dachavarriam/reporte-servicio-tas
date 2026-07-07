@@ -3,6 +3,7 @@ node_modules
 dist
 .wrangler
 .dev.vars
+backups/
 *.log
 *.tsbuildinfo
 .DS_Store

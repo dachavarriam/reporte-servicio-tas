@@ -1,6 +1,6 @@
 export type EstadoRS = 'Borrador' | 'En revisión' | 'Finalizado sin firma' | 'Pendiente de firma' | 'Firmado' | 'Rechazado';
 export type TipoVisita = 'Instalación' | 'Soporte' | 'Mantenimiento' | 'Reparación' | 'Capacitación' | 'Estudio técnico' | 'Inspección' | 'Otro';
-export type RolUsuario = 'admin' | 'supervisor' | 'tecnico';
+export type RolUsuario = 'admin' | 'supervisor' | 'sac' | 'tecnico';
 export type CategoriaFoto = 'Antes' | 'Durante' | 'Después';
 export type CiudadRS = 'Tegucigalpa' | 'San Pedro Sula';
 
@@ -24,6 +24,13 @@ export interface ReporteServicio {
 export interface Usuario { id: string; usuario: string; nombre: string; correo: string; telefono: string; rol: RolUsuario; activo: boolean; mustChangePassword?: boolean }
 export interface Cliente { id: string; nombre: string; contacto: string; correo: string; telefono: string; ubicacionDefault?: string }
 export interface Metrics { total: number; borradores: number; revision: number; pendientesFirma: number; completados: number; tiempoPromedioDias: number }
+export type EstadoRevisionSac = 'pendiente' | 'revisado';
+export interface RevisionSac {
+  reporteId: string; estado: EstadoRevisionSac; esRetrabajo: boolean | null; horasExtraAprobadas: boolean;
+  requiereSeguimiento: boolean; comentario: string; revisadoPor?: string; revisadoEn?: string; actualizadoEn?: string;
+  horasTotales: number; horasFueraHorario: number; horasRetrabajo: number; horasExtra: number; horasNormales: number;
+  empleados?: Array<{ nombre: string; rol: string; horaEntrada: string; horaSalida: string; horasTotales: number; horasFueraHorario: number; horasNormales: number; horasExtra: number; horasRetrabajo: number }>;
+}
 
 export const ESTADO_META: Record<EstadoRS, { bg: string; fg: string; dot: string }> = {
   'Borrador': { bg: '#F1F2F4', fg: '#5B6470', dot: '#9AA2AD' },
