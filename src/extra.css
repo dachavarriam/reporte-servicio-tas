@@ -70,6 +70,11 @@
 .followup-actions{display:flex;gap:6px;align-items:center;justify-content:flex-end;flex-wrap:wrap}
 .followup-actions .btn{min-height:36px;padding:8px 10px;font-size:12px}
 .followup-open{display:grid;place-items:center}
+.customer-review{display:grid;gap:14px}
+.customer-review-head{border-color:#F2C6CA;background:#FFF8F8}
+.customer-review .review-card h3{margin:12px 0 4px;font-size:13px;color:var(--gray-600)}
+.customer-review .review-card p{white-space:pre-wrap;color:var(--gray-600)}
+.customer-review .modal-actions{justify-content:flex-start;margin-top:12px}
 .mobile-step-top,.mobile-section-intro{display:none}
 
 @media(max-width:900px){

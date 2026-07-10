@@ -476,6 +476,7 @@ app.post('/api/reportes', async c => {
   rs.creadoEn = now;
   rs.actualizadoEn = now;
   stampSignature(c, rs, now);
+  syncSignedStatus(rs);
   await saveReport(c.env.DB, rs, now);
   await c.env.DB.prepare('insert into timeline (id, reporte_id, tipo, actor, creado_en) values (?, ?, ?, ?, ?)').bind(crypto.randomUUID(), rs.id, 'creado', user.nombre, now).run();
   return c.json(rs, 201);
@@ -499,6 +500,7 @@ app.put('/api/reportes/:id', async c => {
   if (!rs.creadoPor) rs.creadoPor = user.nombre;
   if (!rs.supervisor || rs.supervisor === 'Carlos Hernández') rs.supervisor = user.nombre;
   stampSignature(c, rs, now);
+  syncSignedStatus(rs);
   if (previousReport && isLockedReportEdit(previousReport, rs)) return c.json({ error: 'report_locked_by_signature' }, 409);
   await saveReport(c.env.DB, rs, now);
   if (previous?.estado && previous.estado !== rs.estado) {
@@ -610,7 +612,7 @@ app.post('/api/reportes/:id/enviar', async c => {
   await c.env.DB.prepare('insert into entregas (id, reporte_id, destinatario, estado, creado_en) values (?, ?, ?, ?, ?)').bind(id, c.req.param('id'), body.destinatario, 'pendiente', now).run();
   await c.env.DB.prepare('insert into timeline (id, reporte_id, tipo, actor, nota, creado_en) values (?, ?, ?, ?, ?, ?)')
     .bind(crypto.randomUUID(), c.req.param('id'), 'envio_pendiente', user.nombre, body.destinatario, now).run();
-  if (c.env.N8N_WEBHOOK_URL) await fetch(c.env.N8N_WEBHOOK_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ deliveryId: id, reporteId: c.req.param('id'), destinatario: body.destinatario, pdfKey: body.pdfKey, callbackUrl: `${new URL(c.req.url).origin}/api/entregas/${id}/estado`, ciudad: rs.ciudad || '', canal: cityChannel(rs.ciudad), cliente: { nombre: rs.cliente, contacto: rs.contacto, correo: rs.correo, telefono: rs.telefono, ciudad: rs.ciudad || '', ubicacion: rs.ubicacion }, reporte: { id: rs.id, fecha: rs.fecha, tipoVisita: rs.tipoVisita, supervisor: rs.supervisor, ciudad: rs.ciudad || '', trabajoRealizado: rs.trabajoRealizado, observaciones: rs.observaciones } }) });
+  if (c.env.N8N_WEBHOOK_URL) await fetch(c.env.N8N_WEBHOOK_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ deliveryId: id, reporteId: c.req.param('id'), destinatario: body.destinatario, pdfKey: body.pdfKey, callbackUrl: `${new URL(c.req.url).origin}/api/entregas/${id}/estado`, ciudad: rs.ciudad || '', canal: cityChannel(rs.ciudad), ordenTrabajo: rs.ordenTrabajo || '', cliente: { nombre: rs.cliente, contacto: rs.contacto, correo: rs.correo, telefono: rs.telefono, ciudad: rs.ciudad || '', ubicacion: rs.ubicacion }, reporte: { id: rs.id, fecha: rs.fecha, ordenTrabajo: rs.ordenTrabajo || '', tipoVisita: rs.tipoVisita, supervisor: rs.supervisor, ciudad: rs.ciudad || '', trabajoRealizado: rs.trabajoRealizado, observaciones: rs.observaciones } }) });
   return c.json({ ok: true, deliveryId: id });
 });
 
@@ -1004,6 +1006,9 @@ function stampSignature(c: { req: { header(name: string): string | undefined } }
     rs[key].ip = rs[key].ip || c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for') || '';
     rs[key].userAgent = rs[key].userAgent || c.req.header('user-agent') || '';
   }
+}
+function syncSignedStatus(rs: Record<string, any>) {
+  if (rs.firma?.trazo && rs.firmaSupervisor?.trazo) rs.estado = 'Firmado';
 }
 async function renderPdfHtml(rs: ReturnType<typeof rowToReport>, env: Env) {
   const equipos = Array.isArray(rs.equipos) ? rs.equipos : [];
