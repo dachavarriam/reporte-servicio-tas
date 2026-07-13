@@ -197,13 +197,17 @@ app.get('/api/reportes', async c => {
   const estado = c.req.query('estado'); const texto = `%${(c.req.query('texto') ?? '').toLowerCase()}%`;
   const requestedLimit = Number(c.req.query('limit') ?? 100);
   const limit = Number.isFinite(requestedLimit) ? Math.min(Math.max(Math.floor(requestedLimit), 1), 100) : 100;
+  const requestedOffset = Number(c.req.query('offset') ?? 0);
+  const offset = Number.isFinite(requestedOffset) ? Math.min(Math.max(Math.floor(requestedOffset), 0), 20000) : 0;
   const where: string[] = []; const params: unknown[] = [];
   if (estado && estado !== 'Todos') { where.push('estado = ?'); params.push(estado); }
   if (texto !== '%%') { where.push('(lower(id) like ? or lower(cliente) like ? or lower(ubicacion) like ?)'); params.push(texto, texto, texto); }
   if (user.rol !== 'admin' && user.rol !== 'sac') { where.push('(supervisor = ? or creado_por = ?)'); params.push(user.nombre, user.nombre); }
-  const sql = `select * from reportes ${where.length ? `where ${where.join(' and ')}` : ''} order by fecha desc limit ?`;
-  const rows = await c.env.DB.prepare(sql).bind(...params, limit).all();
-  return c.json({ items: rows.results.map(rowToReport), total: rows.results.length });
+  const clause = where.length ? `where ${where.join(' and ')}` : '';
+  const totalRow = await c.env.DB.prepare(`select count(*) as total from reportes ${clause}`).bind(...params).first<{ total: number }>();
+  const sql = `select * from reportes ${clause} order by fecha desc, id desc limit ? offset ?`;
+  const rows = await c.env.DB.prepare(sql).bind(...params, limit, offset).all();
+  return c.json({ items: rows.results.map(rowToReport), total: Number(totalRow?.total ?? rows.results.length) });
 });
 
 app.get('/api/clientes/resumen', async c => {
@@ -1020,15 +1024,22 @@ async function renderPdfHtml(rs: ReturnType<typeof rowToReport>, env: Env) {
   const infoCell = (label: string, value: unknown) => `<td><strong>${esc(label)}:</strong><p>${esc(value || '-')}</p></td>`;
   const yesNo = (value: unknown) => value ? '<span class="status-pill status-yes">Sí</span>' : '<span class="status-pill status-no">No</span>';
   const textBlock = (title: string, value: unknown) => `<div class="text-box"><strong>${esc(title)}</strong><p>${esc(value || 'No registrado.')}</p></div>`;
+  const sectionTitle = (title: string, colspan = 1) => `<table class="o_main_table section-heading"><tbody><tr class="section-title-row"><td colspan="${colspan}">${esc(title)}</td></tr></tbody></table>`;
+  const photoCard = (e: Record<string, unknown>) => `<div class="photo">${e.dataUrl ? `<img src="${esc(e.dataUrl)}" alt="${esc(e.descripcion)}">` : ''}<strong>${esc(e.categoria)}</strong><span>${esc(e.descripcion)}</span></div>`;
+  const photoRows = fotos.reduce<string[]>((rows, foto, index) => {
+    if (index % 2 === 0) rows.push(`<tr><td>${photoCard(foto)}</td><td>${fotos[index + 1] ? photoCard(fotos[index + 1]) : ''}</td></tr>`);
+    return rows;
+  }, []).join('');
   return `<!doctype html>
 <html>
 <head>
   <meta charset="utf-8">
   <style>
-    @page { size: letter; margin: 0.20in 0.42in 0.72in; }
+    @page { size: letter; margin: 0.20in 0.42in 0.56in; }
     * { box-sizing: border-box; }
-    body { margin: 0; color: #222222; font-family: Arial, Helvetica, sans-serif; font-size: 12px; line-height: 1.3; }
-    .manual-header { width: 100%; border-bottom: 1px solid #dddddd; padding-bottom: 6px; margin-bottom: 10px; }
+    html, body { width: 100%; }
+    body { margin: 0; color: #222222; font-family: Arial, Helvetica, sans-serif; font-size: 12px; line-height: 1.3; padding-bottom: 0.02in; }
+    .manual-header { width: 100%; border-bottom: 1px solid #dddddd; padding-bottom: 6px; margin-bottom: 10px; break-inside: avoid; page-break-inside: avoid; }
     .manual-header-table { width: 100%; border-collapse: collapse; }
     .manual-header-table td { border: none; vertical-align: middle; padding: 0; }
     .manual-logo-cell { width: 34%; }
@@ -1039,7 +1050,7 @@ async function renderPdfHtml(rs: ReturnType<typeof rowToReport>, env: Env) {
     .manual-company-info { font-size: 10.2px; color: #555555; margin: 1px 0 0; line-height: 1.18; }
     .report-title { margin-bottom: 10px; }
     .report-title h2 { margin: 0; font-size: 21px; font-weight: 700; line-height: 1.15; }
-    .info-box, .summary-box { border: 1px solid #dddddd; background-color: #fafafa; page-break-inside: avoid; }
+    .info-box, .summary-box { border: 1px solid #dddddd; background-color: #fafafa; break-inside: avoid; page-break-inside: avoid; }
     .info-box { width: 100%; padding: 7px 10px; margin: 8px 0 12px; }
     .info-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
     .info-table td { width: 25%; vertical-align: top; padding: 3px 8px 5px 3px; border: none; font-size: 11px; }
@@ -1052,8 +1063,11 @@ async function renderPdfHtml(rs: ReturnType<typeof rowToReport>, env: Env) {
     .o_main_table { width: 100%; table-layout: fixed; border-collapse: collapse; margin-top: 16px; page-break-inside: auto; }
     .o_main_table th, .o_main_table td { font-size: 10.8px; line-height: 1.25; vertical-align: top; padding: 6px 4px; border: none; word-wrap: break-word; overflow-wrap: break-word; text-align: left; }
     .o_main_table th { white-space: normal; background-color: #f2f2f2; border-bottom: 1px solid #cccccc; font-weight: 700; }
+    .o_main_table thead { display: table-header-group; }
+    .section-heading { break-after: avoid; page-break-after: avoid; margin-top: 14px; }
     .o_main_table .item-row td { background-color: #ffffff; border-bottom: 1px solid #eeeeee; }
     .o_main_table .item-row-alt td { background-color: #f7f7f7; border-bottom: 1px solid #eeeeee; }
+    .personal-table { break-inside: avoid; page-break-inside: avoid; }
     .text-center { text-align: center; }
     .text-start { text-align: left; }
     .text-end { text-align: right; }
@@ -1062,24 +1076,27 @@ async function renderPdfHtml(rs: ReturnType<typeof rowToReport>, env: Env) {
     .summary-box table { width: 100%; margin-top: 3px; border-collapse: collapse; table-layout: fixed; }
     .summary-box td { font-size: 10.8px; padding: 2px 8px 2px 0; border: none; vertical-align: top; }
     .text-muted-small { color: #666666; font-size: 11.5px; margin-top: 10px; }
-    .text-box { border: 1px solid #dddddd; background: #ffffff; padding: 10px 12px; margin-top: 10px; page-break-inside: avoid; }
+    .text-box { border: 1px solid #dddddd; background: #ffffff; padding: 10px 12px; margin-top: 10px; break-inside: auto; page-break-inside: auto; }
     .text-box strong { display: block; color: #555555; margin-bottom: 4px; font-size: 11.5px; }
-    .text-box p { margin: 0; white-space: pre-wrap; }
-    .two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-    .evidence-section { break-before: page; page-break-before: always; }
-    .photos { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-top: 16px; }
-    .photo { border: 1px solid #dddddd; background: #ffffff; padding: 7px; page-break-inside: avoid; }
-    .photo img { display: block; width: 100%; height: 205px; object-fit: cover; background: #f2f2f2; }
+    .text-box p { margin: 0; white-space: pre-wrap; orphans: 3; widows: 3; }
+    .two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; break-inside: auto; page-break-inside: auto; }
+    .evidence-section { margin-top: 16px; break-inside: auto; page-break-inside: auto; }
+    .photos-table { width: 100%; table-layout: fixed; border-collapse: separate; border-spacing: 0 10px; margin-top: 6px; }
+    .photos-table tr { break-inside: avoid; page-break-inside: avoid; }
+    .photos-table td { width: 50%; vertical-align: top; padding: 0 5px; border: none; }
+    .photo { border: 1px solid #dddddd; background: #ffffff; padding: 7px; break-inside: avoid; page-break-inside: avoid; }
+    .photo img { display: block; width: 100%; height: 195px; object-fit: cover; background: #f2f2f2; }
     .photo strong { display: inline-block; margin-top: 6px; font-size: 11.5px; color: #555555; }
     .photo span { display: block; color: #666666; font-size: 11px; }
-    .signature-table { width: 100%; table-layout: fixed; border-collapse: collapse; margin-top: 16px; page-break-inside: avoid; }
+    .signature-table { width: 100%; table-layout: fixed; border-collapse: collapse; margin-top: 16px; break-inside: avoid; page-break-inside: avoid; }
     .signature-table td { width: 50%; vertical-align: top; padding: 8px 18px; border: none; text-align: center; }
-    .signature-card { min-height: 166px; page-break-inside: avoid; }
+    .signature-card { min-height: 166px; break-inside: avoid; page-break-inside: avoid; }
     .signature-slot { height: 92px; display: flex; align-items: flex-end; justify-content: center; }
     .signature { height: 82px; max-width: 240px; object-fit: contain; display: block; }
     .signature-line { min-height: 74px; border-top: 1px solid #555555; padding-top: 5px; font-size: 11.5px; }
     .signature-meta { display: block; color: #666666; font-size: 9.5px; line-height: 1.15; margin-top: 2px; }
-    .manual-footer { position: fixed; left: 0; right: 0; bottom: 0; height: 0.34in; border-top: 1px solid #dddddd; padding-top: 5px; color: #666666; font-size: 9.2px; line-height: 1.18; text-align: center; background: #ffffff; }
+    .signature-note { break-inside: avoid; page-break-inside: avoid; }
+    .manual-footer { position: fixed; left: 0; right: 0; bottom: 0; height: 0.30in; border-top: 1px solid #dddddd; padding-top: 4px; color: #666666; font-size: 9.2px; line-height: 1.18; text-align: center; background: #ffffff; }
   </style>
 </head>
 <body>
@@ -1110,11 +1127,7 @@ async function renderPdfHtml(rs: ReturnType<typeof rowToReport>, env: Env) {
     </table>
   </div>
 
-  <table class="o_main_table">
-    <tbody>
-      <tr class="section-title-row"><td colspan="2">Detalle del servicio</td></tr>
-    </tbody>
-  </table>
+  ${sectionTitle('Detalle del servicio', 2)}
   ${textBlock('Trabajo realizado', rs.trabajoRealizado)}
   <div class="two">
     ${textBlock('Observaciones', rs.observaciones)}
@@ -1135,7 +1148,7 @@ async function renderPdfHtml(rs: ReturnType<typeof rowToReport>, env: Env) {
     <tbody>${materiales.length ? materiales.map((m: Record<string, unknown>, i: number) => `<tr class="${i % 2 ? 'item-row item-row-alt' : 'item-row'}"><td class="text-start">${esc(m.producto)}</td><td class="text-center">${esc(m.cantidad)}</td><td class="text-center">${esc(m.unidad)}</td><td class="text-center">${esc(m.uso)}</td></tr>`).join('') : `<tr><td colspan="4" class="text-center">No hay materiales registrados.</td></tr>`}</tbody>
   </table>
 
-  <table class="o_main_table">
+  <table class="o_main_table personal-table">
     <thead><tr><th class="text-start" style="width:40%">Personal participante</th><th class="text-center" style="width:20%">Rol</th><th class="text-center" style="width:20%">Entrada</th><th class="text-center" style="width:20%">Salida</th></tr></thead>
     <tbody>${personal.length ? personal.map((p: Record<string, unknown>, i: number) => `<tr class="${i % 2 ? 'item-row item-row-alt' : 'item-row'}"><td class="text-start">${esc(p.nombre)}</td><td class="text-center">${esc(p.rol)}</td><td class="text-center">${esc(p.horaEntrada || '-')}</td><td class="text-center">${esc(p.horaSalida || '-')}</td></tr>`).join('') : `<tr><td colspan="4" class="text-center">No hay personal registrado.</td></tr>`}</tbody>
   </table>
@@ -1148,10 +1161,8 @@ async function renderPdfHtml(rs: ReturnType<typeof rowToReport>, env: Env) {
   </div>
 
   <section class="evidence-section">
-    <table class="o_main_table">
-      <tbody><tr class="section-title-row"><td>Evidencias fotográficas</td></tr></tbody>
-    </table>
-    ${fotos.length ? `<div class="photos">${fotos.map((e: Record<string, unknown>) => `<div class="photo">${e.dataUrl ? `<img src="${esc(e.dataUrl)}" alt="${esc(e.descripcion)}">` : ''}<strong>${esc(e.categoria)}</strong><span>${esc(e.descripcion)}</span></div>`).join('')}</div>` : empty}
+    ${sectionTitle('Evidencias fotográficas')}
+    ${fotos.length ? `<table class="photos-table"><tbody>${photoRows}</tbody></table>` : empty}
   </section>
 
   <table class="signature-table">
@@ -1161,7 +1172,7 @@ async function renderPdfHtml(rs: ReturnType<typeof rowToReport>, env: Env) {
     </tr>
   </table>
 
-  <p class="text-muted-small">Este documento registra el servicio realizado y la aceptación de los trabajos descritos.</p>
+  <p class="text-muted-small signature-note">Este documento registra el servicio realizado y la aceptación de los trabajos descritos.</p>
   <div class="manual-footer">+504 9463-3724 | infohns@tas-seguridad.com; servicioalclientehn@tas-seguridad.com | www.tas-seguridad.com | 05019006484414</div>
 </body>
 </html>`;

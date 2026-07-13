@@ -75,6 +75,8 @@
 .customer-review .review-card h3{margin:12px 0 4px;font-size:13px;color:var(--gray-600)}
 .customer-review .review-card p{white-space:pre-wrap;color:var(--gray-600)}
 .customer-review .modal-actions{justify-content:flex-start;margin-top:12px}
+.pager{display:flex;align-items:center;justify-content:center;gap:12px;margin:18px 0 0}
+.pager span{color:var(--gray-600);font-weight:900}
 .mobile-step-top,.mobile-section-intro{display:none}
 
 @media(max-width:900px){
@@ -88,6 +90,8 @@
   .client-file-header{display:grid}
   .followup-item{grid-template-columns:auto 1fr}
   .followup-actions{grid-column:1/-1;justify-content:flex-start}
+  .pager{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .pager span{grid-column:1/-1;text-align:center;order:-1}
   html,body,#root{max-width:100%;overflow-x:hidden}
   .app-area.form-mode .topbar,
   .app-area.form-mode .bottom-nav{display:none}
