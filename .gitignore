@@ -7,3 +7,5 @@ backups/
 *.log
 *.tsbuildinfo
 .DS_Store
+.n8n_webhook_secret
+scripts/respaldos/
