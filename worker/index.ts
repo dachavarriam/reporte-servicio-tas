@@ -2,8 +2,10 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import type { RolUsuario } from '../src/domain/types';
 
-type Env = { DB: D1Database; FILES: R2Bucket; BROWSER: BrowserRun; APP_ORIGIN: string; N8N_WEBHOOK_URL: string; N8N_USER_WEBHOOK_URL?: string; N8N_SAC_WEBHOOK_URL?: string; N8N_CALLBACK_SECRET?: string; R2_PREFIX: string; ODOO_URL?: string; ODOO_DB?: string; ODOO_USER?: string; ODOO_API_KEY?: string; ODOO_PASSWORD?: string; ASSETS: Fetcher };
+type Env = { DB: D1Database; FILES: R2Bucket; BROWSER: BrowserRun; APP_ORIGIN: string; N8N_WEBHOOK_URL: string; N8N_USER_WEBHOOK_URL?: string; N8N_SAC_WEBHOOK_URL?: string; N8N_CALLBACK_SECRET?: string; N8N_WEBHOOK_SECRET?: string; R2_PREFIX: string; R2_PDF_PREFIX?: string; IMAGES?: ImagesBinding; ODOO_URL?: string; ODOO_DB?: string; ODOO_USER?: string; ODOO_API_KEY?: string; ODOO_PASSWORD?: string; ASSETS: Fetcher };
 const app = new Hono<{ Bindings: Env }>();
+// Encabezados para los webhooks de n8n: la clave evita que alguien use el flujo para mandar correos desde TAS.
+const n8nHeaders = (env: Env): Record<string, string> => ({ 'content-type': 'application/json', ...(env.N8N_WEBHOOK_SECRET ? { 'x-rs-webhook-secret': env.N8N_WEBHOOK_SECRET } : {}) });
 app.use('/api/*', async (c, next) => cors({ origin: c.env.APP_ORIGIN, credentials: true })(c, next));
 
 app.get('/api/health', c => c.json({ ok: true, service: 'rs-tas', time: new Date().toISOString() }));
@@ -459,7 +461,7 @@ app.put('/api/sac/revisiones/:id', async c => {
   await c.env.DB.prepare('insert into timeline (id, reporte_id, tipo, actor, nota, creado_en) values (?, ?, ?, ?, ?, ?)')
     .bind(crypto.randomUUID(), id, 'revision_sac', user.nombre, esRetrabajo ? 'Revisión SAC con horas de retrabajo' : 'Revisión SAC completada', now).run();
   if (c.env.N8N_SAC_WEBHOOK_URL) {
-    await fetch(c.env.N8N_SAC_WEBHOOK_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ tipo: 'revision_sac', reporteId: id, cliente: rs.cliente, fecha: rs.fecha, ciudad: rs.ciudad || '', supervisor: rs.supervisor, esRetrabajo, horasExtraAprobadas, requiereSeguimiento: false, comentario: body.comentario ?? '', horas: hours, empleados: employeeHours, revisadoPor: user.nombre, revisadoEn: now }) });
+    await fetch(c.env.N8N_SAC_WEBHOOK_URL, { method: 'POST', headers: n8nHeaders(c.env), body: JSON.stringify({ tipo: 'revision_sac', reporteId: id, cliente: rs.cliente, fecha: rs.fecha, ciudad: rs.ciudad || '', supervisor: rs.supervisor, esRetrabajo, horasExtraAprobadas, requiereSeguimiento: false, comentario: body.comentario ?? '', horas: hours, empleados: employeeHours, revisadoPor: user.nombre, revisadoEn: now }) });
   }
   return c.json({ ok: true, revision: { reporteId: id, estado: 'revisado', esRetrabajo, horasExtraAprobadas, requiereSeguimiento: false, comentario: body.comentario ?? '', ...hours, empleados: employeeHours, revisadoPor: user.nombre, revisadoEn: now, actualizadoEn: now } });
 });
@@ -594,13 +596,21 @@ app.post('/api/reportes/:id/pdf', async c => {
   const rs = rowToReport(row); const html = await renderPdfHtml(rs, c.env);
   const pdf = await c.env.BROWSER.quickAction('pdf', { html, cacheTTL: 0, pdfOptions: { format: 'letter', printBackground: true, margin: { top: '0.5in', right: '0.5in', bottom: '0.5in', left: '0.5in' } } });
   if (!pdf.ok) return c.json({ error: 'pdf_failed', detail: await pdf.text() }, 502);
-  const prefix = c.env.R2_PREFIX || 'reportes';
   const bytes = await pdf.arrayBuffer();
-  const key = `${prefix}/${rs.id}/pdf/${Date.now()}.pdf`; await c.env.FILES.put(key, bytes, { httpMetadata: { contentType: 'application/pdf' } });
+  // Descargar no guarda copia: el PDF se arma de nuevo cada vez.
+  if (c.req.query('download') === '1') return new Response(bytes, { headers: { 'content-type': 'application/pdf', 'content-disposition': `attachment; filename="${rs.id}.pdf"` } });
+  // Un solo PDF por RS en R2 (el último enviado). Prefijo propio para que la regla de vencimiento del bucket no toque
+  // las fotos; el archivo permanente queda en Odoo Documentos.
+  const prefix = c.env.R2_PDF_PREFIX || 'reportes-pdf';
+  const key = `${prefix}/${rs.id}/${Date.now()}.pdf`; await c.env.FILES.put(key, bytes, { httpMetadata: { contentType: 'application/pdf' } });
   await c.env.DB.prepare('insert into archivos (id, reporte_id, tipo, r2_key, creado_en) values (?, ?, ?, ?, ?)').bind(crypto.randomUUID(), rs.id, 'pdf', key, new Date().toISOString()).run();
+  const anteriores = await c.env.DB.prepare("select id, r2_key from archivos where reporte_id = ? and tipo = 'pdf' and r2_key <> ?").bind(rs.id, key).all<{ id: string; r2_key: string }>();
+  if (anteriores.results.length) {
+    await c.env.FILES.delete(anteriores.results.map(a => a.r2_key));
+    await c.env.DB.batch(anteriores.results.map(a => c.env.DB.prepare('delete from archivos where id = ?').bind(a.id)));
+  }
   await c.env.DB.prepare('insert into timeline (id, reporte_id, tipo, actor, nota, creado_en) values (?, ?, ?, ?, ?, ?)')
     .bind(crypto.randomUUID(), rs.id, 'pdf_generado', user.nombre, key, new Date().toISOString()).run();
-  if (c.req.query('download') === '1') return new Response(bytes, { headers: { 'content-type': 'application/pdf', 'content-disposition': `attachment; filename="${rs.id}.pdf"` } });
   return c.json({ ok: true, key });
 });
 
@@ -612,11 +622,13 @@ app.post('/api/reportes/:id/enviar', async c => {
   if (!canAccessReport(user, reportRow)) return c.json({ error: 'forbidden' }, 403);
   const rs = rowToReport(reportRow);
   const body = await c.req.json<{ destinatario: string; pdfKey: string }>(); const id = crypto.randomUUID();
+  const pdfDelRs = await c.env.DB.prepare("select 1 from archivos where reporte_id = ? and tipo = 'pdf' and r2_key = ?").bind(c.req.param('id'), body.pdfKey ?? '').first();
+  if (!pdfDelRs) return c.json({ error: 'pdf_invalido' }, 400);
   const now = new Date().toISOString();
   await c.env.DB.prepare('insert into entregas (id, reporte_id, destinatario, estado, creado_en) values (?, ?, ?, ?, ?)').bind(id, c.req.param('id'), body.destinatario, 'pendiente', now).run();
   await c.env.DB.prepare('insert into timeline (id, reporte_id, tipo, actor, nota, creado_en) values (?, ?, ?, ?, ?, ?)')
     .bind(crypto.randomUUID(), c.req.param('id'), 'envio_pendiente', user.nombre, body.destinatario, now).run();
-  if (c.env.N8N_WEBHOOK_URL) await fetch(c.env.N8N_WEBHOOK_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ deliveryId: id, reporteId: c.req.param('id'), destinatario: body.destinatario, pdfKey: body.pdfKey, callbackUrl: `${new URL(c.req.url).origin}/api/entregas/${id}/estado`, ciudad: rs.ciudad || '', canal: cityChannel(rs.ciudad), ordenTrabajo: rs.ordenTrabajo || '', cliente: { nombre: rs.cliente, contacto: rs.contacto, correo: rs.correo, telefono: rs.telefono, ciudad: rs.ciudad || '', ubicacion: rs.ubicacion }, reporte: { id: rs.id, fecha: rs.fecha, ordenTrabajo: rs.ordenTrabajo || '', tipoVisita: rs.tipoVisita, supervisor: rs.supervisor, ciudad: rs.ciudad || '', trabajoRealizado: rs.trabajoRealizado, observaciones: rs.observaciones } }) });
+  if (c.env.N8N_WEBHOOK_URL) await fetch(c.env.N8N_WEBHOOK_URL, { method: 'POST', headers: n8nHeaders(c.env), body: JSON.stringify({ deliveryId: id, reporteId: c.req.param('id'), destinatario: body.destinatario, pdfKey: body.pdfKey, callbackUrl: `${new URL(c.req.url).origin}/api/entregas/${id}/estado`, ciudad: rs.ciudad || '', canal: cityChannel(rs.ciudad), ordenTrabajo: rs.ordenTrabajo || '', cliente: { nombre: rs.cliente, contacto: rs.contacto, correo: rs.correo, telefono: rs.telefono, ciudad: rs.ciudad || '', ubicacion: rs.ubicacion }, reporte: { id: rs.id, fecha: rs.fecha, ordenTrabajo: rs.ordenTrabajo || '', tipoVisita: rs.tipoVisita, supervisor: rs.supervisor, ciudad: rs.ciudad || '', trabajoRealizado: rs.trabajoRealizado, observaciones: rs.observaciones } }) });
   return c.json({ ok: true, deliveryId: id });
 });
 
@@ -848,7 +860,7 @@ async function sendUserInvite(env: Env, usuario: { id: string; usuario: string; 
   try {
     const res = await fetch(env.N8N_USER_WEBHOOK_URL, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: n8nHeaders(env),
       body: JSON.stringify({
         tipo: 'usuario_creado',
         creadoPor,
@@ -1019,7 +1031,7 @@ async function renderPdfHtml(rs: ReturnType<typeof rowToReport>, env: Env) {
   const materiales = Array.isArray(rs.materiales) ? rs.materiales : [];
   const personal = Array.isArray(rs.personal) ? rs.personal : [];
   const evidencias = Array.isArray(rs.evidencias) ? rs.evidencias : [];
-  const fotos = await Promise.all(evidencias.map(async (e: Record<string, unknown>) => ({ ...e, dataUrl: e.blobKey ? await r2ImageDataUrl(env.FILES, String(e.blobKey)) : '' })));
+  const fotos = await Promise.all(evidencias.map(async (e: Record<string, unknown>) => ({ ...e, dataUrl: e.blobKey ? await r2ImageDataUrl(env, String(e.blobKey)) : '' })));
   const empty = '<p class="text-muted-small">No registrado.</p>';
   const infoCell = (label: string, value: unknown) => `<td><strong>${esc(label)}:</strong><p>${esc(value || '-')}</p></td>`;
   const yesNo = (value: unknown) => value ? '<span class="status-pill status-yes">Sí</span>' : '<span class="status-pill status-no">No</span>';
@@ -1085,7 +1097,7 @@ async function renderPdfHtml(rs: ReturnType<typeof rowToReport>, env: Env) {
     .photos-table tr { break-inside: avoid; page-break-inside: avoid; }
     .photos-table td { width: 50%; vertical-align: top; padding: 0 5px; border: none; }
     .photo { border: 1px solid #dddddd; background: #ffffff; padding: 7px; break-inside: avoid; page-break-inside: avoid; }
-    .photo img { display: block; width: 100%; height: 195px; object-fit: cover; background: #f2f2f2; }
+    .photo img { display: block; width: 100%; height: auto; max-height: 195px; object-fit: cover; background: #f2f2f2; }
     .photo strong { display: inline-block; margin-top: 6px; font-size: 11.5px; color: #555555; }
     .photo span { display: block; color: #666666; font-size: 11px; }
     .signature-table { width: 100%; table-layout: fixed; border-collapse: collapse; margin-top: 16px; break-inside: avoid; page-break-inside: avoid; }
@@ -1193,13 +1205,22 @@ function formatLocation(value: { lat?: number; lng?: number; accuracy?: number }
   if (typeof value.lat !== 'number' || typeof value.lng !== 'number') return 'No registrada';
   return `${value.lat.toFixed(5)}, ${value.lng.toFixed(5)}${typeof value.accuracy === 'number' ? ` ±${Math.round(value.accuracy)}m` : ''}`;
 }
-async function r2ImageDataUrl(bucket: R2Bucket, key: string) {
-  const object = await bucket.get(key);
+// Las fotos van reducidas dentro del PDF: JPEG de 700×400 ya recortado a la proporción del recuadro (.photo img,
+// 195 px de alto). Así Chrome no las vuelve a codificar sin pérdida. Si la transformación falla, se usa el original.
+async function r2ImageDataUrl(env: Env, key: string) {
+  const object = await env.FILES.get(key);
   if (!object) return '';
   const contentType = object.httpMetadata?.contentType || 'image/jpeg';
   if (!contentType.startsWith('image/')) return '';
-  const bytes = new Uint8Array(await object.arrayBuffer());
-  return `data:${contentType};base64,${base64(bytes)}`;
+  const original = new Uint8Array(await object.arrayBuffer());
+  if (env.IMAGES && contentType !== 'image/gif') {
+    try {
+      const out = await env.IMAGES.input(new Blob([original]).stream()).transform({ width: 700, height: 400, fit: 'cover' }).output({ format: 'image/jpeg', quality: 70 });
+      const small = new Uint8Array(await out.response().arrayBuffer());
+      if (small.byteLength && small.byteLength < original.byteLength) return `data:image/jpeg;base64,${base64(small)}`;
+    } catch (err) { console.warn('foto sin reducir', key, err); }
+  }
+  return `data:${contentType};base64,${base64(original)}`;
 }
 
 export default app;
