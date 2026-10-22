@@ -1076,10 +1076,10 @@ async function renderPdfHtml(rs: ReturnType<typeof rowToReport>, env: Env) {
     .summary-box table { width: 100%; margin-top: 3px; border-collapse: collapse; table-layout: fixed; }
     .summary-box td { font-size: 10.8px; padding: 2px 8px 2px 0; border: none; vertical-align: top; }
     .text-muted-small { color: #666666; font-size: 11.5px; margin-top: 10px; }
-    .text-box { border: 1px solid #dddddd; background: #ffffff; padding: 10px 12px; margin-top: 10px; break-inside: auto; page-break-inside: auto; }
+    .text-box { display: block; border: 1px solid #dddddd; background: #ffffff; padding: 8px 10px; margin-top: 8px; break-inside: auto; page-break-inside: auto; overflow: visible; }
     .text-box strong { display: block; color: #555555; margin-bottom: 4px; font-size: 11.5px; }
-    .text-box p { margin: 0; white-space: pre-wrap; orphans: 3; widows: 3; }
-    .two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; break-inside: auto; page-break-inside: auto; }
+    .text-box p { display: block; margin: 0; white-space: pre-wrap; overflow: visible; orphans: 3; widows: 3; }
+    .text-blocks { display: block; break-inside: auto; page-break-inside: auto; overflow: visible; }
     .evidence-section { margin-top: 16px; break-inside: auto; page-break-inside: auto; }
     .photos-table { width: 100%; table-layout: fixed; border-collapse: separate; border-spacing: 0 10px; margin-top: 6px; }
     .photos-table tr { break-inside: avoid; page-break-inside: avoid; }
@@ -1129,11 +1129,11 @@ async function renderPdfHtml(rs: ReturnType<typeof rowToReport>, env: Env) {
 
   ${sectionTitle('Detalle del servicio', 2)}
   ${textBlock('Trabajo realizado', rs.trabajoRealizado)}
-  <div class="two">
+  <div class="text-blocks">
     ${textBlock('Observaciones', rs.observaciones)}
     ${textBlock('Estado actual', rs.estadoActual)}
   </div>
-  <div class="two">
+  <div class="text-blocks">
     ${textBlock('Recomendaciones', rs.recomendaciones)}
     ${textBlock('Acciones pendientes', rs.accionesPendientes)}
   </div>

@@ -75,6 +75,7 @@
 .customer-review .review-card h3{margin:12px 0 4px;font-size:13px;color:var(--gray-600)}
 .customer-review .review-card p{white-space:pre-wrap;color:var(--gray-600)}
 .customer-review .modal-actions{justify-content:flex-start;margin-top:12px}
+.signature-modal-body{display:grid;gap:12px}
 .pager{display:flex;align-items:center;justify-content:center;gap:12px;margin:18px 0 0}
 .pager span{color:var(--gray-600);font-weight:900}
 .mobile-step-top,.mobile-section-intro{display:none}
@@ -151,8 +152,12 @@
   }
   .form-footer .btn{min-height:50px;padding:12px 10px;border-radius:15px}
   .form-footer .btn-ghost{grid-column:1/-1;min-height:42px}
-  .modal-layer{align-items:stretch;padding:0}
+  .modal-layer{align-items:stretch;padding:0;overflow:hidden}
   .modal{max-width:none;min-height:100svh;border-radius:0;padding:18px 16px calc(20px + env(safe-area-inset-bottom))}
-  .modal .signature{height:240px}
+  .signature-modal{height:100dvh;min-height:0;display:flex;flex-direction:column;padding:0}
+  .signature-modal-body{display:grid;gap:12px;overflow:auto;padding:18px 16px 12px;-webkit-overflow-scrolling:touch}
+  .modal .signature{height:clamp(180px,32svh,230px)}
   .modal-actions{display:grid;grid-template-columns:1fr 1fr}
+  .signature-modal-actions{position:sticky;bottom:0;z-index:2;padding:10px 16px calc(12px + env(safe-area-inset-bottom));background:rgba(255,255,255,.98);border-top:1px solid var(--border);box-shadow:0 -10px 24px -18px rgba(20,22,28,.45)}
+  .signature-modal-actions .btn{min-height:52px;border-radius:15px}
 }
